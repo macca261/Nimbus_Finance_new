@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Account {
+  id            String   @id @default(cuid())
+  countryCode   String?  @default("DE")
+  iban          String?
+  bic           String?
+  name          String?
+  institution   String?
+  createdAt     DateTime @default(now())
+  // Relations
+  imports       Import[]
+  transactions  Transaction[]
+}
+
+model Import {
+  id         String   @id @default(cuid())
+  accountId  String
+  bankAdapter String?
+  fileHash   String?  @unique
+  importedAt DateTime @default(now())
+  // Relations
+  account    Account  @relation(fields: [accountId], references: [id])
+  transactions Transaction[]
+}
+
+model Transaction {
+  id              String   @id @default(cuid())
+  accountId       String
+  importId        String
+  bookingDate     String
+  valueDate       String?
+  amount          Decimal
+  currency        String?  @default("EUR")
+  balanceAfter    Decimal?
+  txType          String?
+  counterpartName String?
+  counterpartIban String?
+  counterpartBic  String?
+  mandateRef      String?
+  creditorId      String?
+  endToEndId      String?
+  purpose         String?
+  rawCode         String?
+  mcc             String?
+  merchantId      String?
+  categoryId      String?
+  categoryConfidence Float?
+  isRecurring     Boolean  @default(false)
+  recurrenceKey   String?
+  userNote        String?
+  createdAt       DateTime @default(now())
+  // Relations
+  account         Account  @relation(fields: [accountId], references: [id])
+  import          Import   @relation(fields: [importId], references: [id])
+}
+
+

@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+body { @apply bg-white text-gray-900; }
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-md px-4 py-2 font-medium transition;
+}
+.btn-primary {
+  @apply bg-primary-500 text-white hover:bg-primary-400;
+}
+.input {
+  @apply border rounded-md px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-primary-300;
+}
+
+
