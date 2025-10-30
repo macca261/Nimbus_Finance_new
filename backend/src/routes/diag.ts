@@ -26,6 +26,10 @@ router.get('/last-import', (_req, res) => {
   res.json(lastImport || { note: 'no import yet' });
 });
 
+router.get('/ping', (_req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
+
 export default router;
 
 

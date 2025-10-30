@@ -2,6 +2,8 @@ export const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '')
 
 export function apiUrl(path: string) {
   const p = path.startsWith('/') ? path : `/${path}`;
+  // If using Vite proxy (API_BASE === '/api'), avoid prefixing '/api' twice
+  if (API_BASE === '/api') return p;
   return `${API_BASE}${p}`;
 }
 
