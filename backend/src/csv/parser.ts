@@ -225,4 +225,157 @@ export function parseTransactions(csvTextInput: string): { bank: string; transac
   return { bank: detection.bank, transactions: txs };
 }
 
+export function parseGermanNumber(value: string): number {
+  if (value == null) return NaN;
+  let raw = String(value).replace(/\u00A0/g, ' ').trim();
+  let negative = false;
+  if (/\(.*\)/.test(raw)) negative = true;
+  if (raw.endsWith('-')) negative = true;
+  raw = raw.replace(/[€A-Za-z\s]/g, '');
+  raw = raw.replace(/\./g, '').replace(',', '.');
+  raw = raw.replace(/-$/, '');
+  const n = Number(raw);
+  if (String(value).trim() === '') return NaN;
+  if (Number.isNaN(n)) return NaN;
+  return negative ? -Math.abs(n) : n;
+}
+
+export function parseGermanDate(value: string): string {
+  const v = (value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  const m = v.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (m) {
+    const d = Number(m[1]);
+    const mo = Number(m[2]);
+    let y = Number(m[3]);
+    if (y < 100) y += 2000;
+    return new Date(Date.UTC(y, mo - 1, d)).toISOString().slice(0, 10);
+  }
+  const t = new Date(v);
+  if (!Number.isNaN(t.getTime())) return new Date(Date.UTC(t.getFullYear(), t.getMonth(), t.getDate())).toISOString().slice(0, 10);
+  return '';
+}
+
+function splitSemicolonLine(line: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (ch === ';' && !inQuotes) {
+      parts.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current);
+  return parts.map(p => p.trim());
+}
+
+export class GermanBankCSVParser {
+  parseCSV(csvText: string): { transactions: ParsedTransaction[]; bank: string } {
+    const bank = this.detectBank(csvText);
+    switch (bank) {
+      case 'comdirect':
+        return { transactions: this.parseComdirect(csvText), bank };
+      case 'sparkasse':
+        return { transactions: this.parseSparkasse(csvText), bank };
+      case 'n26':
+        return { transactions: this.parseN26(csvText), bank };
+      default:
+        return { transactions: this.parseGeneric(csvText), bank: 'unknown' };
+    }
+  }
+
+  private detectBank(csvText: string): string {
+    if (csvText.includes('Umsätze Girokonto') && csvText.includes('Buchungstag')) return 'comdirect';
+    if (csvText.includes('Umsatz-Kategorien') || csvText.includes('Buchungstext')) return 'sparkasse';
+    if (csvText.includes('Account number') || csvText.includes('Booking Date')) return 'n26';
+    return 'unknown';
+  }
+
+  private parseComdirect(csvText: string): ParsedTransaction[] {
+    const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const transactions: ParsedTransaction[] = [];
+    let dataStartIndex = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('"Buchungstag";"Wertstellung"') || lines[i].startsWith('Buchungstag;Wertstellung')) {
+        dataStartIndex = i + 1;
+        break;
+      }
+    }
+    for (let i = dataStartIndex; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line || line === '""') continue;
+      try {
+        const cleanLine = line.replace(/\r/g, '');
+        const parts = splitSemicolonLine(cleanLine).map(p => p.replace(/"/g, ''));
+        if (parts.length >= 5) {
+          const bookingDate = parts[0];
+          const description = parts[3] || '';
+          const amountStr = parts[4] || '0';
+          const tx: ParsedTransaction = {
+            date: parseGermanDate(bookingDate),
+            amount: this.parseGermanAmount(amountStr),
+            description,
+            merchant: this.extractMerchantFromDescription(description),
+            currency: 'EUR',
+          };
+          if (tx.date && !Number.isNaN(tx.amount)) transactions.push(tx);
+        }
+      } catch {
+        continue;
+      }
+    }
+    return transactions;
+  }
+
+  private parseGermanAmount(amountStr: string): number {
+    let cleanAmount = amountStr
+      .replace(/\./g, '')
+      .replace(',', '.')
+      .replace(/[^\d.-]/g, '');
+    const amount = parseFloat(cleanAmount);
+    if (Number.isNaN(amount)) {
+      const match = amountStr.match(/-?[\d.,]+/);
+      return match ? this.parseGermanAmount(match[0]) : 0;
+    }
+    return amount;
+  }
+
+  private extractMerchantFromDescription(description: string): string {
+    const lower = description.toLowerCase();
+    if (lower.includes('lidl')) return 'Lidl';
+    if (lower.includes('uber')) return 'Uber';
+    if (lower.includes('cursor')) return 'Cursor Software';
+    if (lower.includes('paypal')) {
+      const m = description.match(/Ihr Einkauf bei (.+?)( Ref\.|$)/i);
+      return m ? m[1].trim() : 'PayPal';
+    }
+    if (lower.includes('amazon')) return 'Amazon';
+    if (lower.includes('spotify')) return 'Spotify';
+    if (lower.includes('netflix')) return 'Netflix';
+    if (lower.includes('rewe')) return 'Rewe';
+    if (lower.includes('aldi')) return 'Aldi';
+    if (lower.includes('aral')) return 'Aral';
+    if (lower.includes('shell')) return 'Shell';
+    return 'Unknown';
+  }
+
+  private parseSparkasse(csvText: string): ParsedTransaction[] { return []; }
+  private parseN26(csvText: string): ParsedTransaction[] { return []; }
+  private parseGeneric(csvText: string): ParsedTransaction[] { return []; }
+}
+
+export function parseTransactions(csvTextInput: string): { bank: string; transactions: ParsedTransaction[] } {
+  const parser = new GermanBankCSVParser();
+  const { bank, transactions } = parser.parseCSV(csvTextInput);
+  return { bank, transactions };
+}
+
 

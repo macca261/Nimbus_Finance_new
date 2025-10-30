@@ -2,7 +2,7 @@ import { Link, Route, Routes, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Upload from './pages/Upload';
-import Dashboard from './components/Dashboard';
+import Dashboard from './pages/Dashboard';
 
 function isAuthed() {
   return Boolean(localStorage.getItem('token'));

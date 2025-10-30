@@ -12,6 +12,11 @@ model User {
   email        String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
+  tier         String   @default("free")
+
+  providerAccounts ProviderAccount[]
+  subscription     Subscription?
+  usageCounters    UsageCounter[]
 }
 
 model Account {
@@ -67,6 +72,107 @@ model Transaction {
   // Relations
   account         Account  @relation(fields: [accountId], references: [id])
   import          Import   @relation(fields: [importId], references: [id])
+  aiInferences    AIInference[]
 }
 
+
+// Pro tier models
+model ProviderAccount {
+  id                String   @id @default(cuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  institutionName   String?
+  mask              String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokens  ProviderToken[]
+  cursors SyncCursor[]
+  jobs    SyncJob[]
+
+  @@unique([userId, provider, providerAccountId])
+  @@map("provider_accounts")
+}
+
+model ProviderToken {
+  id                 String   @id @default(cuid())
+  providerAccountId  String
+  accessTokenEnc     String
+  refreshTokenEnc    String?
+  expiresAt          DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  account ProviderAccount @relation(fields: [providerAccountId], references: [id], onDelete: Cascade)
+  @@map("provider_tokens")
+}
+
+model SyncJob {
+  id                String   @id @default(cuid())
+  providerAccountId String
+  status            String
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  error             String?
+  createdAt         DateTime @default(now())
+
+  account ProviderAccount @relation(fields: [providerAccountId], references: [id], onDelete: Cascade)
+  @@map("sync_jobs")
+}
+
+model SyncCursor {
+  id                String   @id @default(cuid())
+  providerAccountId String
+  accountId         String
+  sinceCursor       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  account ProviderAccount @relation(fields: [providerAccountId], references: [id], onDelete: Cascade)
+  @@unique([providerAccountId, accountId])
+  @@map("sync_cursors")
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  plan      String
+  status    String
+  renewsAt  DateTime?
+  stripeSubscriptionId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("subscriptions")
+}
+
+model UsageCounter {
+  id          String   @id @default(cuid())
+  userId      String
+  period      String
+  aiCalls     Int      @default(0)
+  connections Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, period])
+  @@map("usage_counters")
+}
+
+model AIInference {
+  id                   String   @id @default(cuid())
+  transactionId        String
+  model                String
+  suggestionCategoryId String?
+  confidence           Float?
+  reasonJson           String?
+  createdAt            DateTime @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  @@map("ai_inferences")
+}
 

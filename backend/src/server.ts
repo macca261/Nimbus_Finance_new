@@ -4,6 +4,7 @@ import cors from 'cors';
 
 import authRouter from './routes/auth';
 import csvRouter from './routes/csv';
+import providersRouter from './routes/providers';
 import { prisma } from './db/prisma';
 
 const app = express();
@@ -28,6 +29,7 @@ app.get('/api/health/db', async (_req, res) => {
 
 app.use('/api/auth', authRouter);
 app.use('/api/csv', csvRouter);
+app.use('/api', providersRouter);
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
 
