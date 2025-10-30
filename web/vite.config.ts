@@ -14,7 +14,11 @@ export default defineConfig({
     port: 5173,
     hmr: { overlay: false },
     proxy: {
-      '/api': 'http://localhost:4000'
+      '/api': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        secure: false
+      }
     }
   }
 });

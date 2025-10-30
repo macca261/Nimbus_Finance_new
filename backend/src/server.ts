@@ -32,6 +32,10 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'nimbus-backend' });
 });
 
+app.get('/health', (_req, res) => {
+  res.json({ status: 'OK', message: 'Nimbus Finance Backend is running', time: new Date().toISOString() });
+});
+
 app.get('/api/health/db', async (_req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
