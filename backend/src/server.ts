@@ -13,6 +13,9 @@ import settingsRouter from './routes/settings';
 import { prisma } from './db/prisma';
 import diagRouter from './routes/diag';
 import { safeError } from './utils/redact';
+import categoriesRouter from './routes/categories';
+import summaryRouter from './routes/summary';
+import { devAuthBypass } from './middleware/devAuthBypass';
 
 const app = express();
 export { app };
@@ -23,6 +26,7 @@ const origins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
   .filter(Boolean);
 app.use(cors({ origin: origins, credentials: true }));
 app.use(express.json());
+app.use(devAuthBypass);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'nimbus-backend' });
@@ -47,6 +51,8 @@ app.use('/api', importsRouter);
 app.use('/api', transactionsRouter);
 app.use('/api', insightsRouter);
 app.use('/api', settingsRouter);
+app.use('/api/categories', categoriesRouter);
+app.use('/api/summary', summaryRouter);
 app.use('/', diagRouter);
 
 const PORT = parseInt(process.env.PORT || '4000', 10);

@@ -7,13 +7,17 @@ import { prisma } from '../db/prisma';
 import { sha256 } from '../utils/hash';
 import { computeStableTxId } from '../providers/abstract';
 import { parseCsvToTable, normalizeTable } from '../ingest/csv-normalizer';
+import { buildHeuristicAdapter } from '../ingest/autoAdapter';
+import { chooseAdapter, mapToCanonical } from '../ingest/adapter-engine';
+import { getMatchingAdapter, saveAdapter, computeAdapterHash } from '../services/customAdapters';
+import type { AuthRequest } from '../middleware/authMiddleware';
 import { categorizeText } from '../services/categorizer';
 
 const router = Router();
 const maxMb = parseInt(process.env.MAX_UPLOAD_MB || '20', 10);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: maxMb * 1024 * 1024 } });
 
-router.post('/imports/csv', upload.single('file'), async (req, res) => {
+router.post('/imports/csv', upload.single('file'), async (req: AuthRequest, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const csvText = decodeCsvBuffer(req.file.buffer);
@@ -22,11 +26,46 @@ router.post('/imports/csv', upload.single('file'), async (req, res) => {
     const norm = normalizeCsvToCanonical(csvText);
 
     if (!norm.adapter) {
-      // Unknown format → wizard
+      // Unknown format → try custom per-user adapter hash and heuristic auto-mapper
       const table = parseCsvToTable(csvText);
       const normalized = normalizeTable(table);
-      const sample = normalized.rows.slice(0, 5);
-      return res.json({ needsMapping: true, headers: normalized.headersOriginal, sample });
+      const headers = normalized.headersOriginal;
+      const sampleRow = Object.fromEntries(headers.map((h, i) => [h, normalized.rows[0]?.[i] ?? '']));
+      const hash = computeAdapterHash(headers, Object.values(sampleRow));
+
+      // If authed and custom adapter exists, use it
+      if (req.userId) {
+        const found = await getMatchingAdapter(req.userId, hash);
+        if (found) {
+          const records = normalized.rows.map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ''])));
+          const mapped = mapToCanonical(found, records).map(r => ({
+            booking_date: r.bookingDate!, value_date: r.valueDate, amount: r.amount!, currency: r.currency, purpose: r.purpose, counterpart_name: r.counterpartName,
+          }));
+          // Replace norm rows and proceed below
+          norm.adapter = { bankName: found.meta?.bank || found.id, id: found.id } as any;
+          (norm as any).rows = mapped;
+        }
+      }
+
+      if (!norm.adapter) {
+        const { adapter, coverage, reasons } = buildHeuristicAdapter(headers, sampleRow);
+        if (coverage >= 0.66) {
+          const records = normalized.rows.map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ''])));
+          const mapped = mapToCanonical(adapter as any, records).map(r => ({
+            booking_date: r.bookingDate!, value_date: r.valueDate, amount: r.amount!, currency: r.currency, purpose: r.purpose, counterpart_name: r.counterpartName,
+          }));
+          norm.adapter = { bankName: 'auto', id: adapter.id } as any;
+          (norm as any).rows = mapped;
+          (norm as any).meta = { autoMapped: true, coverage, reasons };
+          // Optionally auto-save if high coverage and authed
+          if (req.userId && coverage >= 0.8) {
+            await saveAdapter(req.userId, hash, `Auto (${new Date().toISOString().slice(0,10)})`, adapter);
+          }
+        } else {
+          const sample = normalized.rows.slice(0, 5);
+          return res.json({ needsMapping: true, headers, sample });
+        }
+      }
     }
 
     const fileHash = sha256(req.file.buffer);
@@ -42,8 +81,13 @@ router.post('/imports/csv', upload.single('file'), async (req, res) => {
       imp = await prisma.import.findFirst({ where: { fileHash } });
     }
 
-    const rows = norm.rows;
-    if (!rows.length) return res.status(422).json({ error: 'No transactions found', adapterId: norm.adapter?.id || null, imported: 0 });
+    const rows = (norm as any).rows ?? norm.rows;
+    if (!rows.length) {
+      // provide dialect hint
+      const table = parseCsvToTable(csvText);
+      const normalized = normalizeTable(table);
+      return res.status(422).json({ code: 'NO_ROWS', message: 'No rows detected. Check delimiter/encoding', adapterId: norm.adapter?.id || null, imported: 0, headers: normalized.headersOriginal });
+    }
 
     // Build stable IDs
     const candidates = rows.map((r) => ({
@@ -150,7 +194,7 @@ router.post('/imports/csv', upload.single('file'), async (req, res) => {
       updated++;
     }
 
-    return res.json({ adapterId: norm.adapter?.id || null, imported: created, updated, duplicates, errors });
+    return res.json({ adapterId: norm.adapter?.id || null, imported: created, updated, duplicates, errors, meta: (norm as any).meta || undefined });
   } catch (e: any) {
     return res.status(400).json({ error: 'Failed to import CSV' });
   }

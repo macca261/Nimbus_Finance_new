@@ -39,6 +39,17 @@ export default function ColumnMapWizard({ headers, sampleRows }: Props) {
   const [savedId, setSavedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const uniqueHeaders = useMemo(() => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const h of headers) {
+      const k = (h || '').trim().toLowerCase();
+      if (!k) continue;
+      if (!seen.has(k)) { seen.add(k); out.push(h); }
+    }
+    return out;
+  }, [headers]);
+
   const preview = useMemo(() => {
     const idx = (h?: string) => (h ? headers.indexOf(h) : -1);
     return sampleRows.slice(0, 5).map(r => {
@@ -95,9 +106,9 @@ export default function ColumnMapWizard({ headers, sampleRows }: Props) {
               value={mapping[f] || ''}
               onChange={(e) => setMapping(m => ({ ...m, [f]: e.target.value || undefined }))}
             >
-              <option value="">—</option>
-              {headers.map(h => (
-                <option key={h} value={h}>{h}</option>
+              <option key={`none-${f}`} value="">—</option>
+              {uniqueHeaders.map(h => (
+                <option key={`opt-${f}-${(h||'').toString().toLowerCase().replace(/[^a-z0-9]+/g,'-')}`} value={h}>{h}</option>
               ))}
             </select>
           </div>

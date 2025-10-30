@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../db/prisma';
+import { AUTH_DEV_BYPASS, DEV_ADMIN_EMAIL, JWT_SECRET } from '../config/env';
 
 const router = Router();
 
@@ -54,5 +55,15 @@ router.post('/login', async (req, res) => {
 });
 
 export default router;
+
+// Dev-only login to set session cookie
+router.post('/dev-login', async (_req, res) => {
+  if (!AUTH_DEV_BYPASS) return res.status(404).json({ error: 'Not found' });
+  const user = await prisma.user.findUnique({ where: { email: DEV_ADMIN_EMAIL } });
+  if (!user) return res.status(500).json({ error: 'Dev user not seeded' });
+  const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+  res.cookie('token', token, { httpOnly: true, sameSite: 'lax' });
+  return res.json({ ok: true, user: { id: user.id, email: user.email }, token });
+});
 
 

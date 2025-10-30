@@ -1,0 +1,10 @@
+{
+  "id": "custom_csv_v1",
+  "match": {
+    "anyHeader": [
+      "",
+      ""
+    ]
+  },
+  "map": {}
+}

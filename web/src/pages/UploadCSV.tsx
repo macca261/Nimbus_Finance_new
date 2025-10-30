@@ -4,12 +4,12 @@ import ColumnMapWizard from '../components/ColumnMapWizard';
 import { api } from '../lib/api';
 
 type ImportResult =
-  | { needsMapping: true; headers: string[]; sample: string[][] }
-  | { new: number; updated: number; duplicates: number; errors: number };
+  | { needsMapping: true; headers: string[]; sample: string[][]; meta?: any }
+  | { imported: number; updated: number; duplicates: number; errors: number; adapterId?: string; meta?: { autoMapped?: boolean; coverage?: number } };
 
 export default function UploadCSVPage() {
   const [needsMapping, setNeedsMapping] = useState<null | { headers: string[]; sample: string[][] }>(null);
-  const [summary, setSummary] = useState<null | { new: number; updated: number; duplicates: number; errors: number }>(null);
+  const [summary, setSummary] = useState<null | { imported: number; updated: number; duplicates: number; errors: number; adapterId?: string; meta?: any }>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,7 +25,8 @@ export default function UploadCSVPage() {
       if ((data as any).needsMapping) setNeedsMapping(data as any);
       else setSummary(data as any);
     } catch (e: any) {
-      setError(e?.response?.data?.error || 'Upload failed');
+      const payload = e?.response?.data;
+      setError(payload?.message || payload?.error || 'Upload failed');
     } finally {
       setLoading(false);
     }
@@ -56,11 +57,17 @@ export default function UploadCSVPage() {
       {summary && (
         <div className="mt-6 border rounded p-4">
           <h3 className="font-semibold mb-2">Import Summary</h3>
+          {summary.meta?.autoMapped && (
+            <div className="text-xs inline-flex items-center gap-2 px-2 py-1 rounded-full bg-green-50 text-green-700 mb-2">
+              Mapped automatically {summary.meta.coverage ? `(confidence ${(summary.meta.coverage*100).toFixed(0)}%)` : ''}
+            </div>
+          )}
           <ul className="text-sm space-y-1">
-            <li><strong>New</strong>: {summary.new}</li>
+            <li><strong>Imported</strong>: {summary.imported}</li>
             <li><strong>Updated</strong>: {summary.updated}</li>
             <li><strong>Duplicates</strong>: {summary.duplicates}</li>
             <li><strong>Errors</strong>: {summary.errors}</li>
+            {summary.adapterId && <li><strong>Adapter</strong>: {summary.adapterId}</li>}
           </ul>
         </div>
       )}
