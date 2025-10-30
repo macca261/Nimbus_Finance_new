@@ -1,82 +1,124 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-
-import authRouter from './routes/auth';
-import csvRouter from './routes/csv';
-import providersRouter from './routes/providers';
-import adaptersRouter from './routes/adapters';
-import importsRouter from './routes/imports';
-import transactionsRouter from './routes/transactions';
-import insightsRouter from './routes/insights';
-import settingsRouter from './routes/settings';
-import { prisma } from './db/prisma';
-import diagRouter from './routes/diag';
-import { safeError } from './utils/redact';
-import categoriesRouter from './routes/categories';
-import summaryRouter from './routes/summary';
-import { devAuthBypass } from './middleware/devAuthBypass';
+import express from "express";
+import cors from "cors";
+import multer from "multer";
 
 const app = express();
-export { app };
 
-const origins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-app.use(cors({ origin: origins, credentials: true }));
+// Middleware
+app.use(cors());
 app.use(express.json());
-app.use(devAuthBypass);
+app.use(express.urlencoded({ extended: true }));
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'nimbus-backend' });
-});
-
-app.get('/health', (_req, res) => {
-  res.json({ status: 'OK', message: 'Nimbus Finance Backend is running', time: new Date().toISOString() });
-});
-
-app.get('/api/health/db', async (_req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ ok: true, db: 'connected' });
-  } catch (e: any) {
-    // eslint-disable-next-line no-console
-    console.error('DB health check failed:', e?.message || e);
-    res.status(500).json({ ok: false, db: 'disconnected', error: e?.message || 'Unknown DB error' });
-  }
-});
-
-app.use('/api/auth', authRouter);
-app.use('/api/csv', csvRouter);
-app.use('/api', providersRouter);
-app.use('/api', adaptersRouter);
-app.use('/api', importsRouter);
-app.use('/api', transactionsRouter);
-app.use('/api', insightsRouter);
-app.use('/api', settingsRouter);
-app.use('/api/categories', categoriesRouter);
-app.use('/api/summary', summaryRouter);
-app.use('/', diagRouter);
-app.use('/api/diag', diagRouter);
-
-const PORT = parseInt(process.env.PORT || '4000', 10);
-
-async function start() {
-  try {
-    await prisma.$connect();
-    // eslint-disable-next-line no-console
-    console.log('Database connected successfully');
-  } catch (e: any) {
-    // eslint-disable-next-line no-console
-    console.error('Failed to connect to database:', safeError(e));
-  }
-  app.listen(PORT, () => {
-    // eslint-disable-next-line no-console
-    console.log(`Nimbus backend listening on http://localhost:${PORT}`);
+// Health check endpoint
+app.get("/health", (_req, res) => {
+  res.json({ 
+    status: "OK", 
+    message: "Nimbus Finance Backend Running!",
+    timestamp: new Date().toISOString(),
+    version: "1.0.0"
   });
-}
+});
 
-start();
+// Mock transactions endpoint
+app.get("/api/transactions", (req, res) => {
+  const { limit = "10" } = req.query as { limit?: string };
+  const transactions = [
+    {
+      id: "1",
+      bookingDate: "2024-01-15",
+      amount: -15.67,
+      currency: "EUR",
+      purpose: "REWE SAGT DANKE",
+      category: "Groceries",
+      counterpartName: "REWE",
+      type: "card"
+    },
+    {
+      id: "2",
+      bookingDate: "2024-01-14", 
+      amount: 3200.00,
+      currency: "EUR",
+      purpose: "Salary",
+      category: "Income",
+      counterpartName: "Employer GmbH",
+      type: "transfer"
+    },
+    {
+      id: "3",
+      bookingDate: "2024-01-13",
+      amount: -12.99,
+      currency: "EUR",
+      purpose: "Netflix Subscription",
+      category: "Entertainment",
+      counterpartName: "Netflix",
+      type: "direct_debit"
+    }
+  ];
+  
+  const result = transactions.slice(0, parseInt(limit as string));
+  res.json(result);
+});
+
+// Mock categories breakdown endpoint
+app.get("/api/categories/breakdown", (_req, res) => {
+  res.json([
+    { category: "Groceries", amount: -450.00, count: 12, color: "#10B981" },
+    { category: "Transport", amount: -120.50, count: 8, color: "#3B82F6" },
+    { category: "Entertainment", amount: -85.30, count: 5, color: "#8B5CF6" },
+    { category: "Income", amount: 3200.00, count: 2, color: "#059669" }
+  ]);
+});
+
+// Mock balance endpoint
+app.get("/api/summary/balance", (_req, res) => {
+  res.json({
+    currentBalance: 45230.50,
+    availableBalance: 44800.00,
+    currency: "EUR",
+    lastUpdated: new Date().toISOString()
+  });
+});
+
+// CSV upload endpoint
+const upload = multer({ storage: multer.memoryStorage() });
+
+app.post("/api/imports/csv", upload.single("file"), (req, res) => {
+  try {
+    console.log("📬 CSV upload received! File:", req.file?.originalname);
+    
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    // Mock successful import
+    const result = {
+      new: 3,
+      updated: 0,
+      duplicates: 0,
+      errors: 0,
+      adapterId: "mock_sparkasse",
+      message: "Successfully imported 3 transactions from CSV"
+    };
+
+    console.log("✅ Mock CSV import successful");
+    res.json(result);
+
+  } catch (error) {
+    console.error("❌ CSV upload error:", error);
+    res.status(500).json({ error: "Upload failed" });
+  }
+});
+
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("🚀 NIMBUS FINANCE BACKEND RUNNING!");
+  console.log(`📍 Port: ${PORT}`);
+  console.log(`🌐 Health: http://localhost:${PORT}/health`);
+  console.log(`📊 API Base: http://localhost:${PORT}/api`);
+  console.log(`💾 Using MOCK DATA - No database required`);
+});
+
+export default app;
 
 
