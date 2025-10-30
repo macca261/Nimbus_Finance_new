@@ -4,7 +4,6 @@ import FinancialOverview from '../components/FinancialOverview';
 import BankConnections from '../components/BankConnections';
 import SubscriptionTier from '../components/SubscriptionTier';
 import { api } from '../lib/api';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 type Tx = {
   id: string;
@@ -17,9 +16,9 @@ type Tx = {
 
 export default function DashboardPage() {
   const [rows, setRows] = useState<Tx[]>([]);
-  const [summary, setSummary] = useState<any>(null);
-  const [recurring, setRecurring] = useState<any[]>([]);
-  const [analysis, setAnalysis] = useState<any>(null);
+  const [breakdown, setBreakdown] = useState<{ categoryId: string; total: number }[]>([]);
+  const [recent, setRecent] = useState<any[]>([]);
+  const [mtd, setMtd] = useState<{ monthToDateSpend: number; lastMonthSpend: number } | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('nimbus:lastUpload');
@@ -27,11 +26,12 @@ export default function DashboardPage() {
       const parsed = JSON.parse(saved);
       setRows(parsed.transactions || []);
     }
-    const today = new Date();
-    const ym = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
-    api.get('/insights/monthly-summary', { params: { month: ym } }).then(({ data }) => setSummary(data)).catch(() => {});
-    api.get('/insights/recurring').then(({ data }) => setRecurring(data.items || [])).catch(() => {});
-    api.get('/insights/spending-analysis', { params: { days: 90 } }).then(({ data }) => setAnalysis(data)).catch(() => {});
+    const now = new Date();
+    const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const to = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    api.get('/categories/breakdown', { params: { from, to } }).then(({ data }) => setBreakdown(data.items || [])).catch(() => {});
+    api.get('/transactions', { params: { limit: 20 } }).then(({ data }) => setRecent(data.items || [])).catch(() => {});
+    api.get('/summary/balance').then(({ data }) => setMtd({ monthToDateSpend: data.monthToDateSpend, lastMonthSpend: data.lastMonthSpend })).catch(() => {});
   }, []);
 
   const recent = useMemo(() => rows.slice(0, 10), [rows]);
@@ -41,72 +41,38 @@ export default function DashboardPage() {
       <FinancialOverview />
       <SubscriptionTier currentTier={(localStorage.getItem('tier') || 'free')} />
       <BankConnections />
-      {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="border rounded-xl p-4">
-            <p className="font-semibold mb-2">Monthly summary ({summary.month})</p>
-            <div className="text-sm mb-2">Net: {(summary.net).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</div>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={summary.categories}>
-                  <XAxis dataKey="category" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="total" fill="#8884d8" name="Spending" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-          <div className="border rounded-xl p-4">
-            <p className="font-semibold mb-2">Spending trend (last 6 months)</p>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={summary.trend}>
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="income" fill="#34d399" name="Income" />
-                  <Bar dataKey="expenses" fill="#f87171" name="Expenses" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="border rounded-xl p-4">
+          <p className="font-semibold mb-2">Spending this month</p>
+          <div className="text-2xl font-semibold">{mtd ? (-mtd.monthToDateSpend).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }) : '—'}</div>
+          <div className="text-sm text-gray-600">Last month: {mtd ? (-mtd.lastMonthSpend).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' }) : '—'}</div>
         </div>
-      )}
-
-      {recurring.length > 0 && (
-        <div className="border rounded-xl p-4 mt-4">
-          <p className="font-semibold mb-2">Recurring subscriptions</p>
-          <ul className="divide-y text-sm">
-            {recurring.slice(0, 10).map((r, idx) => (
-              <li key={idx} className="py-2 flex items-center justify-between">
-                <div>
-                  <div className="font-medium">{r.merchant}</div>
-                  <div className="text-gray-600">{r.cadence} · Next due {r.nextDue}</div>
-                </div>
-                <div>{r.amount.toFixed(2)} EUR</div>
+        <div className="border rounded-xl p-4">
+          <p className="font-semibold mb-2">By category (MTD)</p>
+          <ul className="text-sm space-y-1">
+            {breakdown.map(b => (
+              <li key={b.categoryId} className="flex items-center justify-between">
+                <span>{b.categoryId}</span>
+                <span>{b.total.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</span>
               </li>
             ))}
           </ul>
         </div>
-      )}
+      </div>
       <div className="border rounded-xl p-4">
         <p className="font-semibold mb-2">Recent transactions</p>
-        <ul className="divide-y">
-          {recent.map(r => (
-            <li key={r.id} className="py-2 flex items-center justify-between">
-              <div>
-                <p className="font-medium">{r.merchant || r.description.slice(0, 40)}</p>
-                <p className="text-xs text-gray-500">{r.date} · {r.category}</p>
-              </div>
-              <div className={r.amount < 0 ? 'text-red-600' : 'text-green-600'}>
-                {r.amount.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}
-              </div>
-            </li>
-          ))}
-        </ul>
+        <table className="w-full text-sm">
+          <thead><tr className="text-gray-600"><th className="text-left p-2">Date</th><th className="text-left p-2">Purpose</th><th className="text-right p-2">Amount</th></tr></thead>
+          <tbody>
+            {recent.map((r:any) => (
+              <tr key={r.id} className="border-t">
+                <td className="p-2">{r.bookingDate}</td>
+                <td className="p-2 truncate max-w-[480px]">{r.purpose || r.txType || ''}</td>
+                <td className={`p-2 text-right ${r.amount < 0 ? 'text-red-600' : 'text-green-700'}`}>{Number(r.amount).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </DashboardLayout>
   );

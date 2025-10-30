@@ -2,6 +2,7 @@ import { Link, Route, Routes, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Upload from './pages/Upload';
+import CategoriesPage from './pages/Categories';
 import UploadCSVPage from './pages/UploadCSV';
 import TransactionsPage from './pages/Transactions';
 import ReviewPage from './pages/Review';
@@ -37,7 +38,8 @@ export default function App() {
       </header>
       <main className="max-w-5xl mx-auto px-4 py-8">
         <Routes>
-          <Route path="/" element={<Navigate to={isAuthed() ? '/upload' : '/login'} replace />} />
+          <Route path="/" element={<Navigate to={isAuthed() ? '/dashboard' : '/login'} replace />} />
+          <Route path="/categories" element={isAuthed() ? <CategoriesPage /> : <Navigate to="/login" replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/upload" element={isAuthed() ? <UploadCSVPage /> : <Navigate to="/login" replace />} />
