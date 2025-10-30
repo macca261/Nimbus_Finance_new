@@ -1,6 +1,8 @@
 import { Router } from 'express';
 
 const router = Router();
+let lastImport: any = null;
+export function setLastImport(diag: any) { lastImport = diag; }
 
 router.get('/__health', (_req, res) => {
   res.json({ ok: true, version: process.env.npm_package_version || 'dev', time: new Date().toISOString() });
@@ -18,6 +20,10 @@ router.get('/__diag', (_req, res) => {
     adapters = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f: string) => f.endsWith('.json')).length : 0;
   } catch {}
   res.json({ hasParser, adapters });
+});
+
+router.get('/last-import', (_req, res) => {
+  res.json(lastImport || { note: 'no import yet' });
 });
 
 export default router;

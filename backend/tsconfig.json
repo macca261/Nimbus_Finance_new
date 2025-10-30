@@ -6,6 +6,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "esModuleInterop": true,
+    "types": ["node", "vitest"],
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true

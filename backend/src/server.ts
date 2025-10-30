@@ -54,6 +54,7 @@ app.use('/api', settingsRouter);
 app.use('/api/categories', categoriesRouter);
 app.use('/api/summary', summaryRouter);
 app.use('/', diagRouter);
+app.use('/api/diag', diagRouter);
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
 

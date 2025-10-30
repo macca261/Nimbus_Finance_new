@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../lib/api';
+import { post } from '@/lib/api';
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -14,7 +14,7 @@ export default function Signup() {
     setError(null);
     setSuccess(null);
     try {
-      await api.post('/auth/register', { email, password });
+      await post('/api/auth/register', { email, password });
       setSuccess('Account created. You can now log in.');
       setTimeout(() => navigate('/login'), 800);
     } catch (err: any) {

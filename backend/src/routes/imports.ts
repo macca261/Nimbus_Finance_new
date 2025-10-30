@@ -11,6 +11,7 @@ import { buildHeuristicAdapter } from '../ingest/autoAdapter';
 import { chooseAdapter, mapToCanonical } from '../ingest/adapter-engine';
 import { getMatchingAdapter, saveAdapter, computeAdapterHash } from '../services/customAdapters';
 import type { AuthRequest } from '../middleware/authMiddleware';
+import { setLastImport } from './diag';
 import { categorizeText } from '../services/categorizer';
 
 const router = Router();
@@ -57,13 +58,15 @@ router.post('/imports/csv', upload.single('file'), async (req: AuthRequest, res)
           norm.adapter = { bankName: 'auto', id: adapter.id } as any;
           (norm as any).rows = mapped;
           (norm as any).meta = { autoMapped: true, coverage, reasons };
+          setLastImport({ stage: 'auto-mapped', adapterId: adapter.id, coverage, reasons, rows: mapped.length });
           // Optionally auto-save if high coverage and authed
           if (req.userId && coverage >= 0.8) {
             await saveAdapter(req.userId, hash, `Auto (${new Date().toISOString().slice(0,10)})`, adapter);
           }
         } else {
           const sample = normalized.rows.slice(0, 5);
-          return res.json({ needsMapping: true, headers, sample });
+          setLastImport({ stage: 'needs-mapping', headers, sample, coverage, reasons });
+          return res.status(200).json({ needsMapping: true, headers, sample, meta: { coverage, reasons } });
         }
       }
     }
@@ -86,7 +89,8 @@ router.post('/imports/csv', upload.single('file'), async (req: AuthRequest, res)
       // provide dialect hint
       const table = parseCsvToTable(csvText);
       const normalized = normalizeTable(table);
-      return res.status(422).json({ code: 'NO_ROWS', message: 'No rows detected. Check delimiter/encoding', adapterId: norm.adapter?.id || null, imported: 0, headers: normalized.headersOriginal });
+      setLastImport({ stage: 'no-rows', adapterId: norm.adapter?.id, headers: normalized.headersOriginal });
+      return res.status(422).json({ code: 'NO_ROWS', message: 'No rows detected. Check delimiter/encoding', adapterId: norm.adapter?.id || null, imported: 0, hint: { headers: normalized.headersOriginal } });
     }
 
     // Build stable IDs
@@ -194,9 +198,11 @@ router.post('/imports/csv', upload.single('file'), async (req: AuthRequest, res)
       updated++;
     }
 
+    setLastImport({ stage: 'imported', adapterId: norm.adapter?.id, rows: rows.length, imported: created, updated, duplicates, errors });
     return res.json({ adapterId: norm.adapter?.id || null, imported: created, updated, duplicates, errors, meta: (norm as any).meta || undefined });
   } catch (e: any) {
-    return res.status(400).json({ error: 'Failed to import CSV' });
+    setLastImport({ stage: 'error', error: e?.message || String(e) });
+    return res.status(500).json({ code: 'IMPORT_ERROR', message: 'Failed to import CSV' });
   }
 });
 

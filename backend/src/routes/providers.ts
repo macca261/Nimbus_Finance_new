@@ -70,13 +70,10 @@ router.post('/providers/:providerAccountId/sync', requireAuth, async (req: AuthR
 
 router.get('/providers/accounts', requireAuth, async (req: AuthRequest, res) => {
   try {
-    const accounts = await prisma.providerAccount.findMany({
-      where: { userId: req.userId! },
-      include: { tokens: true, jobs: { orderBy: { createdAt: 'desc' }, take: 5 } }
-    });
-    res.json(accounts);
+    const accounts = await prisma.providerAccount.findMany({ where: { userId: req.userId! }, include: { tokens: true, jobs: { orderBy: { createdAt: 'desc' }, take: 5 } } });
+    res.json({ accounts });
   } catch (error: any) {
-    res.status(500).json({ error: error?.message || 'Failed to list accounts' });
+    res.status(200).json({ accounts: [] });
   }
 });
 

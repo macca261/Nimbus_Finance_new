@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import ColumnMapWizard from '../components/ColumnMapWizard';
-import { api } from '../lib/api';
+import { uploadCsv } from '../lib/api';
 
 type ImportResult =
   | { needsMapping: true; headers: string[]; sample: string[][]; meta?: any }
@@ -21,7 +21,7 @@ export default function UploadCSVPage() {
     form.append('file', file);
     try {
       setLoading(true);
-      const { data } = await api.post<ImportResult>('/imports/csv', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const data = await uploadCsv(file);
       if ((data as any).needsMapping) setNeedsMapping(data as any);
       else setSummary(data as any);
     } catch (e: any) {

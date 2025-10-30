@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../lib/api';
+import { post } from '@/lib/api';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -12,7 +12,7 @@ export default function Login() {
     e.preventDefault();
     setError(null);
     try {
-      const { data } = await api.post('/auth/login', { email, password });
+      const { data } = await post('/api/auth/login', { email, password });
       localStorage.setItem('token', data.token);
       navigate('/upload');
     } catch (err: any) {

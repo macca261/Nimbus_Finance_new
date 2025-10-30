@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
+import { api } from '@/lib/api';
 
 function firstDayISO(d = new Date()) { return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0,10); }
 function todayISO(d = new Date()) { return d.toISOString().slice(0,10); }

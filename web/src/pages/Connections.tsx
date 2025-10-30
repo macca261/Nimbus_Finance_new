@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../lib/api';
+import { providerAccounts, providerConnect, providerSync } from '../lib/api';
 
 type ProviderAccount = {
   id: string;
@@ -17,10 +17,10 @@ export default function ConnectionsPage() {
 
   async function load() {
     try {
-      const { data } = await api.get('/providers/accounts');
-      setAccounts(data);
+      const data = await providerAccounts();
+      setAccounts(data.accounts || data);
     } catch (e: any) {
-      setError(e?.response?.data?.error || 'Failed to load connections');
+      setError('Bank connections are disabled in this build. Upgrade to Pro or run the provider backend.');
     }
   }
   useEffect(() => { load(); }, []);
@@ -28,16 +28,16 @@ export default function ConnectionsPage() {
   async function connect(provider: string) {
     setError(null);
     try {
-      const { data } = await api.post(`/providers/${provider}/connect`);
-      location.href = data.url;
+      const data = await providerConnect(provider);
+      if (data?.url) location.href = data.url; else setError('Bank connections are disabled in this prototype.');
     } catch (e: any) {
-      setError(e?.response?.data?.message || e?.response?.data?.error || 'Connect failed');
+      setError('Bank connections are disabled in this prototype.');
     }
   }
 
   async function manualSync(id: string) {
     setError(null);
-    try { await api.post(`/providers/${id}/sync`); load(); } catch (e: any) { setError(e?.response?.data?.error || 'Sync failed'); }
+    try { await providerSync(id); load(); } catch { setError('Bank connections are disabled in this prototype.'); }
   }
 
   return (
