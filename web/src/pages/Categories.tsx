@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '@/lib/api';
+import { categoriesList, categoriesBreakdown } from '@/lib/api';
 
 function firstDayISO(d = new Date()) { return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0,10); }
 function todayISO(d = new Date()) { return d.toISOString().slice(0,10); }
@@ -14,9 +14,9 @@ export default function CategoriesPage() {
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get('/categories');
-        setCats(data.items || data.categories || []);
-        const { data: bd } = await api.get('/categories/breakdown', { params: { from: firstDayISO(), to: todayISO() } });
+        const catsRes = await categoriesList();
+        setCats(catsRes.items || catsRes.categories || []);
+        const bd = await categoriesBreakdown(firstDayISO(), todayISO());
         const map: Record<string, number> = {};
         (bd.items || []).forEach((it: any) => { map[it.categoryId] = it.total; });
         setData(map);

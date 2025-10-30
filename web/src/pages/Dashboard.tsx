@@ -6,7 +6,7 @@ import SpendingByCategory from '../components/dashboard/SpendingByCategory';
 import RecentTransactions from '../components/dashboard/RecentTransactions';
 import QuickActions from '../components/dashboard/QuickActions';
 import BillsOverview from '../components/dashboard/BillsOverview';
-import { api } from '../lib/api';
+import { http } from '@/lib/api';
 
 type Tx = {
   id: string;
@@ -26,9 +26,9 @@ export default function DashboardPage() {
     const now = new Date();
     const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const to = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    api.get('/categories/breakdown', { params: { from, to } }).then(({ data }) => setBreakdown(data.items || [])).catch(() => {});
-    api.get('/transactions', { params: { limit: 20 } }).then(({ data }) => setRecentRows(data.items || [])).catch(() => {});
-    api.get('/summary/balance').then(({ data }) => setMtd({ monthToDateSpend: data.monthToDateSpend, lastMonthSpend: data.lastMonthSpend })).catch(() => {});
+    http.get(`/api/categories/breakdown?from=${from}&to=${to}`).then((data) => setBreakdown((data as any).items || [])).catch(() => {});
+    http.get('/api/transactions?limit=20').then((data) => setRecentRows((data as any).items || (data as any).rows || [])).catch(() => {});
+    http.get('/api/summary/balance').then((data) => setMtd({ monthToDateSpend: (data as any).monthToDateSpend, lastMonthSpend: (data as any).lastMonthSpend })).catch(() => {});
   }, []);
 
   return (

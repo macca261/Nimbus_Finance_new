@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { api } from '../lib/api';
+import { http } from '@/lib/api';
 
 type Props = {
   headers: string[];
@@ -85,10 +85,10 @@ export default function ColumnMapWizard({ headers, sampleRows }: Props) {
         match: { anyHeader: headers.slice(0, 10) },
         map,
       };
-      const { data } = await api.post('/adapters/user', payload);
-      setSavedId(data.id);
+      const data = await http.post('/api/adapters/user', payload);
+      setSavedId((data as any).id || (data as any)?.ok || 'saved');
     } catch (e: any) {
-      setError(e?.response?.data?.error || 'Failed to save adapter');
+      setError(e?.message || 'Failed to save adapter');
     } finally {
       setSaving(false);
     }

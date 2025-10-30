@@ -1,32 +1,35 @@
-import { api as url, api } from './http';
-export { api }; // re-export for callers
+import { http, apiUrl } from './http';
+export const api = apiUrl;
+export { http, apiUrl };
 
 export async function uploadCsv(file: File) {
   const fd = new FormData();
   fd.append('file', file);
-  const r = await fetch(url('/api/imports/csv'), { method: 'POST', body: fd, credentials: 'include' });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.message || data?.error || `Upload failed (${r.status})`);
-  return data;
+  return http.post('/api/imports/csv', fd);
 }
 
 export async function providerAccounts() {
-  const r = await fetch(url('/api/providers/accounts'), { credentials: 'include' });
-  return r.json();
+  return http.get('/api/providers/accounts');
 }
 
 export async function providerConnect(name: string) {
-  const r = await fetch(url(`/api/providers/${name}/connect`), { method: 'POST', credentials: 'include' });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.message || data?.error || `Connect failed (${r.status})`);
-  return data;
+  return http.post(`/api/providers/${name}/connect`);
 }
 
 export async function providerSync(id: string) {
-  const r = await fetch(url(`/api/providers/${id}/sync`), { method: 'POST', credentials: 'include' });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.message || data?.error || `Sync failed (${r.status})`);
-  return data;
+  return http.post(`/api/providers/${id}/sync`);
+}
+
+export async function categoriesList() {
+  return http.get('/api/categories');
+}
+
+export async function categoriesBreakdown(from: string, to: string) {
+  return http.get(`/api/categories/breakdown?from=${from}&to=${to}`);
+}
+
+export async function recentTransactions(limit = 20) {
+  return http.get(`/api/transactions?limit=${limit}`);
 }
 
 function toQuery(params?: Record<string, any>) {
