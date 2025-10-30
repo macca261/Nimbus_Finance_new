@@ -1,0 +1,17 @@
+{
+  "id": "de_sparkasse_camt_csv_v1",
+  "match": { "anyHeader": ["Buchungstag", "Valutadatum", "Verwendungszweck", "IBAN", "BIC", "Betrag", "Währung"] },
+  "map": {
+    "bookingDate": "Buchungstag",
+    "valueDate": "Valutadatum",
+    "amount": { "col": "Betrag", "locale": "de-DE" },
+    "currency": "Währung",
+    "counterpartName": "Auftraggeber/Empfänger",
+    "counterpartIban": "IBAN",
+    "counterpartBic": "BIC",
+    "purpose": { "concat": ["Verwendungszweck", "Zusatzinformationen"], "sep": " " },
+    "txType": { "from": "Buchungstext", "lookup": { "LASTSCHRIFT": "DD", "KARTENZAHLUNG": "CARD", "GEBUEHR": "FEE" } }
+  }
+}
+
+

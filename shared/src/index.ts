@@ -34,3 +34,5 @@ export type Transaction = {
 };
 
 
+export * from './types/canonical';
+export * from './types/adapters';

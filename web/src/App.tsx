@@ -2,7 +2,12 @@ import { Link, Route, Routes, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Upload from './pages/Upload';
+import UploadCSVPage from './pages/UploadCSV';
+import TransactionsPage from './pages/Transactions';
+import ReviewPage from './pages/Review';
 import Dashboard from './pages/Dashboard';
+import ConnectionsPage from './pages/Connections';
+import ReportsPage from './pages/Reports';
 
 function isAuthed() {
   return Boolean(localStorage.getItem('token'));
@@ -18,6 +23,7 @@ export default function App() {
             {isAuthed() ? (
               <>
                 <Link to="/upload" className="text-gray-700 hover:text-primary-500">Upload CSV</Link>
+                <Link to="/connections" className="text-gray-700 hover:text-primary-500">Connections</Link>
                 <button className="btn" onClick={() => { localStorage.removeItem('token'); location.href = '/login'; }}>Logout</button>
               </>
             ) : (
@@ -34,8 +40,12 @@ export default function App() {
           <Route path="/" element={<Navigate to={isAuthed() ? '/upload' : '/login'} replace />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
-          <Route path="/upload" element={isAuthed() ? <Upload /> : <Navigate to="/login" replace />} />
+          <Route path="/upload" element={isAuthed() ? <UploadCSVPage /> : <Navigate to="/login" replace />} />
           <Route path="/dashboard" element={isAuthed() ? <Dashboard /> : <Navigate to="/login" replace />} />
+          <Route path="/reports" element={isAuthed() ? <ReportsPage /> : <Navigate to="/login" replace />} />
+          <Route path="/transactions" element={isAuthed() ? <TransactionsPage /> : <Navigate to="/login" replace />} />
+          <Route path="/review" element={isAuthed() ? <ReviewPage /> : <Navigate to="/login" replace />} />
+          <Route path="/connections" element={isAuthed() ? <ConnectionsPage /> : <Navigate to="/login" replace />} />
         </Routes>
       </main>
     </div>

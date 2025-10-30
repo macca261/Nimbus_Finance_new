@@ -1,0 +1,14 @@
+{
+  "id": "de_n26_csv_v1",
+  "match": { "anyHeader": ["Date", "Payee", "Account number", "Transaction type", "Amount (EUR)"] },
+  "map": {
+    "bookingDate": "Date",
+    "amount": { "col": "Amount (EUR)", "locale": "en-US" },
+    "currency": "Currency",
+    "counterpartName": "Payee",
+    "purpose": ["Payment reference", "Reference"],
+    "txType": { "from": "Transaction type", "lookup": { "CARD_PAYMENT": "CARD", "DIRECT_DEBIT": "DD", "TRANSFER": "TRF" } }
+  }
+}
+
+

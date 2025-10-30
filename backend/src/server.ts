@@ -5,11 +5,23 @@ import cors from 'cors';
 import authRouter from './routes/auth';
 import csvRouter from './routes/csv';
 import providersRouter from './routes/providers';
+import adaptersRouter from './routes/adapters';
+import importsRouter from './routes/imports';
+import transactionsRouter from './routes/transactions';
+import insightsRouter from './routes/insights';
+import settingsRouter from './routes/settings';
 import { prisma } from './db/prisma';
+import diagRouter from './routes/diag';
+import { safeError } from './utils/redact';
 
 const app = express();
+export { app };
 
-app.use(cors({ origin: ['http://localhost:5173'], credentials: true }));
+const origins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+app.use(cors({ origin: origins, credentials: true }));
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => {
@@ -30,6 +42,12 @@ app.get('/api/health/db', async (_req, res) => {
 app.use('/api/auth', authRouter);
 app.use('/api/csv', csvRouter);
 app.use('/api', providersRouter);
+app.use('/api', adaptersRouter);
+app.use('/api', importsRouter);
+app.use('/api', transactionsRouter);
+app.use('/api', insightsRouter);
+app.use('/api', settingsRouter);
+app.use('/', diagRouter);
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
 
@@ -40,7 +58,7 @@ async function start() {
     console.log('Database connected successfully');
   } catch (e: any) {
     // eslint-disable-next-line no-console
-    console.error('Failed to connect to database:', e?.message || e);
+    console.error('Failed to connect to database:', safeError(e));
   }
   app.listen(PORT, () => {
     // eslint-disable-next-line no-console

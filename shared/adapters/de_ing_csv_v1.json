@@ -1,0 +1,17 @@
+{
+  "id": "de_ing_csv_v1",
+  "match": { "anyHeader": ["Buchung", "Wertstellung", "Verwendungszweck", "IBAN/BIC", "Betrag", "Währung"] },
+  "map": {
+    "bookingDate": ["Buchung", "Buchungstag"],
+    "valueDate": ["Wertstellung"],
+    "amount": { "col": "Betrag", "locale": "de-DE" },
+    "currency": "Währung",
+    "counterpartName": ["Name Zahlungsbeteiligter", "Auftraggeber/Zahlungsempfänger"],
+    "counterpartIban": ["IBAN"],
+    "counterpartBic": ["BIC", "IBAN/BIC"],
+    "purpose": ["Verwendungszweck", "Buchungstext"],
+    "txType": { "from": "Buchungstext", "lookup": { "SEPA-LASTSCHRIFT": "DD", "KARTENZAHLUNG": "CARD" } }
+  }
+}
+
+

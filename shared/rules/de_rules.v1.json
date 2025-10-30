@@ -1,0 +1,23 @@
+[
+  { "code": "groceries.rewe", "testRegex": "REWE", "why": "REWE supermarket" },
+  { "code": "groceries.aldi", "testRegex": "ALDI", "why": "ALDI discount supermarket" },
+  { "code": "groceries.lidl", "testRegex": "LIDL", "why": "LIDL discount supermarket" },
+  { "code": "groceries.edeka", "testRegex": "EDEKA", "why": "EDEKA supermarket" },
+  { "code": "groceries.netto", "testRegex": "NETTO", "why": "NETTO supermarket" },
+  { "code": "groceries.penny", "testRegex": "PENNY", "why": "PENNY supermarket" },
+  { "code": "transport.bahn", "testRegex": "BAHN|DB\s?BAHN|DEUTSCHE\s?BAHN", "why": "Deutsche Bahn ticket" },
+  { "code": "transport.kvb", "testRegex": "\bKVB\b", "why": "Cologne public transport" },
+  { "code": "transport.bvg", "testRegex": "\bBVG\b", "why": "Berlin public transport" },
+  { "code": "transport.hvv", "testRegex": "\bHVV\b", "why": "Hamburg public transport" },
+  { "code": "fees.gebuehr", "testRegex": "GEBUEHR|GEBÜHR|ENTGELT|FEE|KARTENGEBUEHR", "why": "Bank fee/charge" },
+  { "code": "subs.spotify", "testRegex": "SPOTIFY", "why": "Spotify subscription" },
+  { "code": "subs.netflix", "testRegex": "NETFLIX", "why": "Netflix subscription" },
+  { "code": "subs.apple", "testRegex": "APPLE\.COM\/BILL|APPLE.COM/BILL", "why": "Apple subscription" },
+  { "code": "fuel.aral", "testRegex": "\bARAL\b", "why": "ARAL fuel" },
+  { "code": "fuel.shell", "testRegex": "\bSHELL\b", "why": "SHELL fuel" },
+  { "code": "shopping.amazon", "testRegex": "AMAZON", "why": "Amazon shopping" },
+  { "code": "shopping.zalando", "testRegex": "ZALANDO", "why": "Zalando shopping" },
+  { "code": "dining.lieferando", "testRegex": "LIEFERANDO", "why": "Lieferando order" }
+]
+
+

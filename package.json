@@ -5,15 +5,19 @@
   "workspaces": [
     "backend",
     "web",
-    "shared"
+    "shared",
+    "apps/mobile",
+    "parser-de"
   ],
   "scripts": {
     "dev": "concurrently -n backend,web -c blue,magenta \"npm run dev:backend\" \"npm run dev:web\"",
     "dev:backend": "npm --workspace backend run dev",
     "dev:web": "npm --workspace web run dev",
-    "build": "npm --workspace backend run build && npm --workspace web run build",
+    "build": "npm --workspace parser-de run build && npm --workspace backend run build && npm --workspace web run build",
     "prisma:generate": "npm --workspace backend run prisma:generate",
-    "prisma:migrate": "npm --workspace backend run prisma:migrate"
+    "prisma:migrate": "npm --workspace backend run prisma:migrate",
+    "smoke:csv": "curl -s -F \"file=@parser-de/src/fixtures/sparkasse_sample.csv\" http://localhost:4000/api/imports/csv | jq",
+    "smoke:camt": "curl -s -F \"file=@parser-de/src/fixtures/camt_sample.xml\" http://localhost:4000/api/imports/camt | jq"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

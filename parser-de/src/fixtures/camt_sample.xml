@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+  <BkToCstmrStmt>
+    <Stmt>
+      <Ntry>
+        <BookgDt><Dt>2025-10-07</Dt></BookgDt>
+        <Amt Ccy="EUR">-3.20</Amt>
+        <NtryDtls>
+          <TxDtls>
+            <RmtInf><Ustrd>KVB TICKET</Ustrd></RmtInf>
+          </TxDtls>
+        </NtryDtls>
+      </Ntry>
+    </Stmt>
+  </BkToCstmrStmt>
+  </Document>
+

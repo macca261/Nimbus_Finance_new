@@ -1,0 +1,12 @@
+{
+  "id": "eu_bunq_csv_v1",
+  "match": { "anyHeader": ["Date", "Description", "Amount", "Balance", "Currency"] },
+  "map": {
+    "bookingDate": "Date",
+    "amount": { "col": "Amount", "locale": "en-US" },
+    "currency": "Currency",
+    "purpose": "Description"
+  }
+}
+
+

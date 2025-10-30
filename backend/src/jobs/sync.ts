@@ -24,7 +24,7 @@ export class SyncEngine {
       const result = await provider.fetchTransactions({
         accessTokenEnc: token.accessTokenEnc,
         providerAccountId: job.account.providerAccountId,
-        since: cursor?.sinceCursor
+        since: cursor?.sinceCursor ?? undefined
       });
 
       // Ensure an Import record exists for provider sync linkage

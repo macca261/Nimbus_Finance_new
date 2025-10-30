@@ -1,0 +1,13 @@
+{
+  "id": "eu_revolut_csv_v1",
+  "match": { "anyHeader": ["Completed Date", "Description", "Amount", "Currency", "Reference"] },
+  "map": {
+    "bookingDate": ["Completed Date", "Started Date"],
+    "amount": { "col": "Amount", "locale": "en-US" },
+    "currency": "Currency",
+    "purpose": ["Description", "Reference"],
+    "txType": { "from": "Type", "lookup": { "CARD_PAYMENT": "CARD", "TRANSFER": "TRF", "FEE": "FEE" } }
+  }
+}
+
+

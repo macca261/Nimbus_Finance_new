@@ -1,0 +1,16 @@
+{
+  "id": "de_dkb_csv_v1",
+  "match": { "anyHeader": ["Buchungstag", "Wertstellung", "Verwendungszweck", "Betrag (EUR)", "Auftraggeber/Begünstigter", "IBAN"] },
+  "map": {
+    "bookingDate": ["Buchungstag", "Datum"],
+    "valueDate": ["Wertstellung"],
+    "amount": { "anyOf": [ { "col": "Betrag (EUR)" }, { "col": "Betrag" } ], "locale": "de-DE" },
+    "currency": ["Währung", "Waehrung"],
+    "counterpartName": ["Auftraggeber/Begünstigter"],
+    "counterpartIban": ["IBAN"],
+    "purpose": ["Verwendungszweck", "Buchungstext"],
+    "txType": { "from": "Buchungstext", "lookup": { "Kartenzahlung": "CARD", "Lastschrift": "DD", "Gutschrift": "CRDT" } }
+  }
+}
+
+
