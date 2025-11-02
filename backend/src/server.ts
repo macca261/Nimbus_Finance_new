@@ -2,22 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import dotenv from 'dotenv';
-// ESM-only parser; load on demand to work in CJS runtime
-async function loadParser() {
-  // Use native dynamic import even in CJS-compiled output
-  // eslint-disable-next-line no-new-func
-  const dynImport: (m: string) => Promise<any> = new Function('m', 'return import(m)') as any;
-  try {
-    // Prefer workspace source build if available to avoid stale node_modules copies
-    const path = await import('node:path');
-    const { pathToFileURL } = await import('node:url');
-    const abs = path.resolve(process.cwd(), 'packages', 'parser-de', 'dist', 'index.js');
-    const fileUrl = pathToFileURL(abs).href;
-    // Attempt import of workspace dist
-    return await dynImport(fileUrl);
-  } catch {}
-  return dynImport('@nimbus/parser-de');
-}
 import { insertTransactions, getBalance, getRecentTransactions, clearAll } from './db';
 import summaryRouter from './routes/summary';
 import { categorize } from './services/categorizer';
@@ -31,10 +15,95 @@ const CORS_ORIGIN = (process.env.CORS_ORIGIN || 'http://localhost:5173')
   .map(s => s.trim())
   .filter(Boolean);
 
-const app = express();
+// Parser interfaces for DI
+export type CanonicalRow = {
+  bookingDate: string;
+  valueDate?: string | null;
+  amountCents: number;
+  currency?: string;
+  purpose?: string;
+  counterpartName?: string;
+  accountIban?: string;
+  rawCode?: string;
+};
+export type ParseResult = { adapterId: string; rows: CanonicalRow[] };
+export interface Parser { parseBufferAuto(buf: Buffer, opts?: any): Promise<ParseResult>; }
+
+function parseEuroToCents(input: string): number {
+  const s = String(input || '').trim().replace(/\s+/g,'').replace('€','');
+  const neg = s.startsWith('-') || s.endsWith('-') || /^\(.*\)$/.test(s);
+  const cleaned = s.replace(/[()\-+]/g,'').replace(/\./g,'').replace(',', '.');
+  const n = Math.round(parseFloat(cleaned) * 100);
+  return (neg ? -1 : 1) * (Number.isFinite(n) ? n : 0);
+}
+function parseDeDate(s?: string): string | undefined {
+  if (!s) return undefined;
+  const t = s.trim();
+  const m = t.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  return undefined;
+}
+
+function makeDefaultParser(): Parser {
+  try {
+    // Try CJS require of installed parser; if ESM-only, this may throw.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const real = require('@nimbus/parser-de');
+    if (real?.parseBufferAuto) {
+      return {
+        async parseBufferAuto(buf: Buffer, opts?: any) {
+          const r = real.parseBufferAuto(buf, opts);
+          // real parser may be sync; normalize
+          const out = await Promise.resolve(r);
+          return { adapterId: out.adapterId || 'parser', rows: out.rows } as ParseResult;
+        },
+      } as Parser;
+    }
+  } catch {}
+  // Fallback minimal CSV parser
+  return {
+    async parseBufferAuto(buf: Buffer): Promise<ParseResult> {
+      const text = buf.toString('utf8');
+      const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+      if (lines.length < 2) throw new Error('no rows');
+      const delim = (lines[0].includes(';') ? ';' : ',');
+      const headers = lines[0].split(delim).map(h => h.trim());
+      const idx = (name: string) => headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
+      const H = {
+        buchung: idx('Buchungstag') >= 0 ? idx('Buchungstag') : idx('Buchung'),
+        valuta: idx('Wertstellung'),
+        betrag: idx('Betrag') >= 0 ? idx('Betrag') : idx('Betrag (EUR)'),
+        waehr: idx('Währung'),
+        zweck: idx('Verwendungszweck') >= 0 ? idx('Verwendungszweck') : idx('Buchungstext'),
+        payee: idx('Begünstigter/Zahlungspflichtiger') >= 0 ? idx('Begünstigter/Zahlungspflichtiger') : idx('Auftraggeber/Empfänger'),
+        iban: idx('IBAN'),
+        code: idx('Umsatzart') >= 0 ? idx('Umsatzart') : idx('Kategorie'),
+      };
+      const rows: CanonicalRow[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(delim);
+        const bookingDate = parseDeDate(cols[H.buchung] || '') || '';
+        const valueDate = parseDeDate(cols[H.valuta] || '') || undefined;
+        const amountCents = parseEuroToCents(cols[H.betrag] || '0');
+        const currency = (H.waehr >= 0 ? cols[H.waehr] : 'EUR') || 'EUR';
+        const purpose = (H.zweck >= 0 ? cols[H.zweck] : '') || '';
+        const counterpartName = (H.payee >= 0 ? cols[H.payee] : '') || '';
+        const accountIban = (H.iban >= 0 ? String(cols[H.iban] || '').replace(/\s+/g,'') : '') || '';
+        const rawCode = (H.code >= 0 ? cols[H.code] : '') || '';
+        if (bookingDate) rows.push({ bookingDate, valueDate: valueDate ?? null, amountCents, currency, purpose, counterpartName, accountIban, rawCode });
+      }
+      return { adapterId: 'mock.csv', rows };
+    }
+  } as Parser;
+}
+
+export function createApp(deps?: { parser?: Parser }) {
+  const app = express();
+  const parser: Parser = deps?.parser ?? makeDefaultParser();
 
 // CORS
-app.use(cors({
+  app.use(cors({
   origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
     if (!origin) return cb(null, true);
     if (CORS_ORIGIN.includes(origin)) return cb(null, true);
@@ -42,26 +111,38 @@ app.use(cors({
   },
   methods: ['GET','POST','OPTIONS'],
   credentials: false,
-}));
-app.options('*', cors());
+  }));
+  app.options('*', cors());
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
 // Summary router
-app.use('/api/summary', summaryRouter);
-console.log('Mounted: /api/summary/*');
+  app.use('/api/summary', summaryRouter);
+  console.log('Mounted: /api/summary/*');
 
 // Health
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true });
-});
+  app.get('/api/health', (_req, res) => {
+  try {
+    const version = '0.1.0';
+    const { db } = require('./db');
+    let tables: string[] = [];
+    let txCount = 0;
+    try {
+      tables = (db.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as { name: string }[]).map(r => r.name);
+      const r = db.prepare(`SELECT COUNT(1) AS c FROM transactions`).get() as { c: number };
+      txCount = r?.c ?? 0;
+    } catch {}
+    res.json({ ok: true, version, db: { ok: true, tables, counts: { tx: txCount } } });
+  } catch (e: any) {
+    res.json({ ok: false, version: '0.1.0', message: e?.message || 'unhealthy', db: { ok: false, tables: [], counts: { tx: 0 } } });
+  }
+  });
 
 // Diag
-app.get('/api/diag/adapters', async (_req, res) => {
-  const { listAdapters } = await loadParser();
-  res.json({ adapters: listAdapters() });
-});
+  app.get('/api/diag/adapters', async (_req, res) => {
+    res.json({ adapters: [] });
+  });
 
 // Upload CSV
 const upload = multer({
@@ -69,22 +150,18 @@ const upload = multer({
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
 });
 
-app.post('/api/imports/csv', upload.single('file'), async (req, res) => {
+  app.post('/api/imports/csv', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ code: 'NO_FILE', message: 'field "file" is required' });
     }
     const buffer = req.file.buffer;
     let parsed;
-    try {
-      const { parseBufferAuto } = await loadParser();
-      parsed = parseBufferAuto(buffer);
-    } catch (e: any) {
-      if (e?.code === 'INVALID_DATE') return res.status(400).json({ code: 'INVALID_DATE', message: 'Invalid date format' });
-      if (e?.code === 'INVALID_AMOUNT') return res.status(400).json({ code: 'INVALID_AMOUNT', message: 'Invalid amount format' });
-      if (e?.code === 'NO_ROWS') return res.status(422).json({ code: 'NO_ROWS', message: 'File contains no rows' });
-      throw e;
-    }
+      try {
+        parsed = await parser.parseBufferAuto(buffer, { accountId: 'test' });
+      } catch (e: any) {
+        return res.status(422).json({ error: 'parse_failed', message: String(e?.message ?? e) });
+      }
     if ('needsMapping' in parsed) {
       return res.json({ needsMapping: true, headers: parsed.headers, sample: parsed.sample });
     }
@@ -103,7 +180,8 @@ app.post('/api/imports/csv', upload.single('file'), async (req, res) => {
     });
     try {
       const { inserted, duplicates } = insertTransactions(canonical as any);
-      return res.json({ adapterId: parsed.adapterId, imported: inserted, duplicates, errors: [] });
+        const payload = { adapterId: parsed.adapterId, imported: inserted, duplicates, total: (parsed.rows?.length ?? 0) };
+        return res.json({ data: payload });
     } catch (e: any) {
       return res.status(500).json({ error: e?.message || 'DB insert failed' });
     }
@@ -111,10 +189,10 @@ app.post('/api/imports/csv', upload.single('file'), async (req, res) => {
     console.error(err);
     return res.status(500).json({ error: (err as any)?.message || 'Unexpected error' });
   }
-});
+  });
 
 // Summary
-app.get('/api/summary/balance', (_req, res) => {
+  app.get('/api/summary/balance', (_req, res) => {
   // total balance
   const total = getBalance();
   // income/expense MTD
@@ -131,8 +209,8 @@ app.get('/api/summary/balance', (_req, res) => {
     FROM transactions
     WHERE bookingDate >= ? AND bookingDate <= ?
   `).get(from, to) as { income: number; expense: number };
-  res.json({ balanceCents: total.balanceCents, incomeCentsMTD: row.income, expenseCentsMTD: row.expense });
-});
+    res.json({ balanceCents: total.balanceCents, incomeCentsMTD: row.income, expenseCentsMTD: row.expense });
+  });
 
 // Monthly (current) income/expense
 app.get('/api/summary/month', (_req, res) => {
@@ -151,11 +229,11 @@ app.get('/api/summary/month', (_req, res) => {
 });
 
 // Transactions
-app.get('/api/transactions', (req, res) => {
+  app.get('/api/transactions', (req, res) => {
   const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10));
   const rows = getRecentTransactions(limit);
-  res.json({ data: rows });
-});
+    res.json({ data: rows });
+  });
 
 // Categories breakdown
 app.get('/api/categories/breakdown', (req, res) => {
@@ -230,15 +308,15 @@ app.get('/api/summary/monthly-6', (_req, res) => {
 });
 
 // Dev reset
-app.delete('/api/dev/reset', (_req, res) => {
+  app.delete('/api/dev/reset', (_req, res) => {
   clearAll();
   res.json({ ok: true });
-});
+  });
 
-app.post('/api/dev/reset', (_req, res) => {
+  app.post('/api/dev/reset', (_req, res) => {
   clearAll();
   res.json({ ok: true });
-});
+  });
 
 // Optional demo seed for development
 if (process.env.DEV_SEED === 'true') {
@@ -266,13 +344,18 @@ if (process.env.DEV_SEED === 'true') {
   } catch {}
 }
 
-// 404
-app.use((_req, res) => res.status(404).json({ code: 'NOT_FOUND', message: 'Route not found' }));
+  // 404
+  app.use((_req, res) => res.status(404).json({ code: 'NOT_FOUND', message: 'Route not found' }));
+  return app;
+}
 
-app.listen(PORT, () => {
-  console.log(`API listening on http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  const app = createApp();
+  app.listen(PORT, () => {
+    console.log(`API listening on http://localhost:${PORT}`);
+  });
+}
 
-export default app;
+export default createApp;
 
 

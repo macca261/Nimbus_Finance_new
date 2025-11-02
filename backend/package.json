@@ -8,7 +8,10 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:reset": "ts-node scripts/dev/reset.ts",
+    "db:seed": "ts-node scripts/dev/seed.ts",
+    "smoke": "ts-node scripts/dev/smoke.ts"
   },
   "dependencies": {
     "@nimbus/parser-de": "file:../packages/parser-de",
@@ -24,6 +27,7 @@
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.12",
     "@types/node": "^20.11.30",
+    "@types/supertest": "^2.0.16",
     "supertest": "^7.0.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",

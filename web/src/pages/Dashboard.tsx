@@ -12,6 +12,7 @@ export default function Dashboard() {
   const [catEntries, setCatEntries] = useState<{ category: string; sumCents: number; count?: number }[]>([])
   const [monthly, setMonthly] = useState<{ label: string; incomeCents: number; expenseCents: number }[]>([])
   const [baseMonth, setBaseMonth] = useState<string | null>(null)
+  const [apiOk, setApiOk] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const fmt = (cents?: number, cur='EUR') =>
@@ -23,14 +24,16 @@ export default function Dashboard() {
     let cancelled = false
     ;(async () => {
       try {
-        const [txsResp, balResp, monsResp] = await Promise.all([
+        const [txsResp, balResp, monsResp, health] = await Promise.all([
           fetch('/api/transactions?limit=10').then(r => r.json()).catch(() => ({ data: [] })),
           apiSummary.balance().catch(() => ({ balanceCents: 0, currency: 'EUR' })),
           apiSummary.months6().catch(() => ({ baseMonth: null, series: [] })),
+          fetch('/api/health').then(r => r.json()).catch(() => ({ ok: false })),
         ])
         if (cancelled) return
         setRecent(Array.isArray(txsResp?.data) ? (txsResp.data as any[]) : [])
         setBalance((balResp?.balanceCents as number) ?? 0)
+        setApiOk(Boolean(health?.ok))
         setBaseMonth(monsResp?.baseMonth ?? null)
         setMonthly(Array.isArray(monsResp?.series) ? monsResp.series : [])
         try {
@@ -60,7 +63,12 @@ export default function Dashboard() {
   if (error) return <div>{error}</div>
   return (
     <div>
-      <h1>Nimbus Finance</h1>
+      <h1 style={{ display:'flex', alignItems:'center', gap: 8 }}>
+        Nimbus Finance
+        <span style={{ fontSize: 12, padding: '2px 6px', borderRadius: 999, background: apiOk ? '#dcfce7' : '#e5e7eb', color: apiOk ? '#065f46' : '#374151' }}>
+          API: {apiOk ? 'ok' : 'offline'}
+        </span>
+      </h1>
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginTop: 12 }}>
         <Kpi title="Saldo gesamt" value={money(balance)} />
         <Kpi title={`Einnahmen (${baseMonth ?? 'Monat'})`} value={money(incomeMTD)} />
@@ -70,11 +78,11 @@ export default function Dashboard() {
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap: 16, marginTop: 16 }}>
         <div>
           <h3>Ausgaben nach Kategorien</h3>
-          <PieChart data={pieData} />
+          {pieData.length === 0 ? <div style={{ fontSize: 12, opacity: .7 }}>Keine Daten.</div> : <PieChart data={pieData} />}
         </div>
         <div>
           <h3>Monatsüberblick (6M)</h3>
-          <BarChart data={barData} />
+          {barData.length === 0 ? <div style={{ fontSize: 12, opacity: .7 }}>Keine Daten.</div> : <BarChart data={barData} />}
         </div>
       </div>
 
