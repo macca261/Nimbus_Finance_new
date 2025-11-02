@@ -56,17 +56,17 @@ app.get("/api/transactions", (req, res) => {
   ];
   
   const result = transactions.slice(0, parseInt(limit as string));
-  res.json(result);
+  res.json({ rows: result });
 });
 
 // Mock categories breakdown endpoint
 app.get("/api/categories/breakdown", (_req, res) => {
-  res.json([
-    { category: "Groceries", amount: -450.00, count: 12, color: "#10B981" },
-    { category: "Transport", amount: -120.50, count: 8, color: "#3B82F6" },
-    { category: "Entertainment", amount: -85.30, count: 5, color: "#8B5CF6" },
-    { category: "Income", amount: 3200.00, count: 2, color: "#059669" }
-  ]);
+  res.json({ items: [
+    { categoryId: "Groceries", total: -450.00, count: 12, color: "#10B981" },
+    { categoryId: "Transport", total: -120.50, count: 8, color: "#3B82F6" },
+    { categoryId: "Entertainment", total: -85.30, count: 5, color: "#8B5CF6" },
+    { categoryId: "Income", total: 3200.00, count: 2, color: "#059669" }
+  ]});
 });
 
 // Mock balance endpoint
@@ -87,12 +87,12 @@ app.post("/api/imports/csv", upload.single("file"), (req, res) => {
     console.log("📬 CSV upload received! File:", req.file?.originalname);
     
     if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
+      return res.status(400).json({ code: 'NO_FILE', message: "Upload field must be \"file\"." });
     }
 
     // Mock successful import
     const result = {
-      new: 3,
+      imported: 3,
       updated: 0,
       duplicates: 0,
       errors: 0,
@@ -105,8 +105,21 @@ app.post("/api/imports/csv", upload.single("file"), (req, res) => {
 
   } catch (error) {
     console.error("❌ CSV upload error:", error);
-    res.status(500).json({ error: "Upload failed" });
+    res.status(500).json({ code: 'IMPORT_ERROR', message: "Upload failed" });
   }
+});
+
+// Providers stubs
+app.get('/api/providers/accounts', (_req, res) => {
+  res.json({ accounts: [] });
+});
+app.post('/api/providers/:name/connect', (_req, res) => {
+  res.status(501).json({ code: 'PRO_ONLY', message: 'Bank connections disabled in prototype.' });
+});
+
+// Diagnostics
+app.get('/api/diag/ping', (_req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
 });
 
 // Start server
