@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { api } from '../lib/api';
+import api from '../lib/api';
 
 type Summary = {
   filename: string;
@@ -23,7 +23,7 @@ export default function CSVUploader() {
     form.append('file', file);
     try {
       setLoading(true);
-      const { data } = await api.post('/csv/upload', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const { data } = await api.post('/imports/csv', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       setSummary(data);
     } catch (err: any) {
       setError(err?.response?.data?.error ?? 'Upload failed');

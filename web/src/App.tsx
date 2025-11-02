@@ -1,57 +1,37 @@
-import { Link, Route, Routes, Navigate } from 'react-router-dom';
-import Login from './pages/Login';
-import Signup from './pages/Signup';
-import Upload from './pages/Upload';
-import CategoriesPage from './pages/Categories';
-import UploadCSVPage from './pages/UploadCSV';
-import TransactionsPage from './pages/Transactions';
-import ReviewPage from './pages/Review';
-import Dashboard from './pages/Dashboard';
-import ConnectionsPage from './pages/Connections';
-import ReportsPage from './pages/Reports';
-
-function isAuthed() {
-  return Boolean(localStorage.getItem('token'));
-}
+import { useEffect, useState } from 'react'
+import { Routes, Route, Link } from 'react-router-dom'
+import Dashboard from './pages/Dashboard'
+import UploadCSV from './pages/UploadCSV'
+import TransactionsPage from './pages/Transactions'
 
 export default function App() {
+  const [health, setHealth] = useState<string>('checking...')
+  useEffect(() => {
+    fetch('/api/health')
+      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
+      .then(j => setHealth('ok'))
+      .catch(() => setHealth('offline'))
+  }, [])
+
   return (
-    <div className="min-h-screen">
-      <header className="border-b">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <Link to="/" className="text-xl font-semibold text-primary-500">Nimbus Finance</Link>
-          <nav className="flex gap-4">
-            {isAuthed() ? (
-              <>
-                <Link to="/upload" className="text-gray-700 hover:text-primary-500">Upload CSV</Link>
-                <Link to="/connections" className="text-gray-700 hover:text-primary-500">Connections</Link>
-                <button className="btn" onClick={() => { localStorage.removeItem('token'); location.href = '/login'; }}>Logout</button>
-              </>
-            ) : (
-              <>
-                <Link to="/login" className="text-gray-700 hover:text-primary-500">Login</Link>
-                <Link to="/signup" className="text-gray-700 hover:text-primary-500">Sign up</Link>
-              </>
-            )}
-          </nav>
-        </div>
+    <div style={{fontFamily:'Inter, system-ui, Arial', padding:16}}>
+      <header style={{display:'flex', gap:16, alignItems:'center', marginBottom:16}}>
+        <h1 style={{margin:0}}>Nimbus Finance</h1>
+        <nav style={{display:'flex', gap:12}}>
+          <Link to="/">Übersicht</Link>
+          <Link to="/transactions">Transaktionen</Link>
+          <Link to="/upload">CSV hochladen</Link>
+        </nav>
+        <span style={{marginLeft:'auto', fontSize:12, opacity:0.7}}>API: {health}</span>
       </header>
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        <Routes>
-          <Route path="/" element={<Navigate to={isAuthed() ? '/dashboard' : '/login'} replace />} />
-          <Route path="/categories" element={isAuthed() ? <CategoriesPage /> : <Navigate to="/login" replace />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/upload" element={isAuthed() ? <UploadCSVPage /> : <Navigate to="/login" replace />} />
-          <Route path="/dashboard" element={isAuthed() ? <Dashboard /> : <Navigate to="/login" replace />} />
-          <Route path="/reports" element={isAuthed() ? <ReportsPage /> : <Navigate to="/login" replace />} />
-          <Route path="/transactions" element={isAuthed() ? <TransactionsPage /> : <Navigate to="/login" replace />} />
-          <Route path="/review" element={isAuthed() ? <ReviewPage /> : <Navigate to="/login" replace />} />
-          <Route path="/connections" element={isAuthed() ? <ConnectionsPage /> : <Navigate to="/login" replace />} />
-        </Routes>
-      </main>
+      <Routes>
+        <Route path="/" element={<Dashboard/>} />
+        <Route path="/upload" element={<UploadCSV/>} />
+        <Route path="/transactions" element={<TransactionsPage/>} />
+        <Route path="*" element={<div>Not found</div>} />
+      </Routes>
     </div>
-  );
+  )
 }
 
 

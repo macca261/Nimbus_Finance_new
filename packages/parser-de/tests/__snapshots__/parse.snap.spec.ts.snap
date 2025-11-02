@@ -1,0 +1,10 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`parser > parses a basic de-DE csv 1`] = `
+{
+  "amountCents": -1567,
+  "bookingDate": "2024-03-01",
+  "currency": "EUR",
+  "purpose": "REWE MARKT",
+}
+`;

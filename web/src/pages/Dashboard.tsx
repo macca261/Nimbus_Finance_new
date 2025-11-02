@@ -1,54 +1,109 @@
-import { useEffect, useState } from 'react';
-import DashboardLayout from '../components/layout/DashboardLayout';
-import FinancialHealthScore from '../components/dashboard/FinancialHealthScore';
-import NetWorthCard from '../components/dashboard/NetWorthCard';
-import SpendingByCategory from '../components/dashboard/SpendingByCategory';
-import RecentTransactions from '../components/dashboard/RecentTransactions';
-import QuickActions from '../components/dashboard/QuickActions';
-import BillsOverview from '../components/dashboard/BillsOverview';
-import { http } from '@/lib/api';
+import { useEffect, useMemo, useState } from 'react'
+import { PieChart, BarChart } from '../lib/chart'
+import { apiSummary, apiDev } from '../lib/api'
 
-type Tx = {
-  id: string;
-  date: string;
-  amount: number;
-  category: string;
-  merchant?: string;
-  description: string;
-};
+type Tx = { id?: string; bookingDate?: string; purpose?: string; amountCents?: number; currency?: string }
 
-export default function DashboardPage() {
-  const [breakdown, setBreakdown] = useState<{ categoryId: string; total: number }[]>([]);
-  const [recentRows, setRecentRows] = useState<any[]>([]);
-  const [mtd, setMtd] = useState<{ monthToDateSpend: number; lastMonthSpend: number } | null>(null);
+export default function Dashboard() {
+  const [recent, setRecent] = useState<Tx[]>([])
+  const [balance, setBalance] = useState<number>(0)
+  const [incomeMTD, setIncomeMTD] = useState<number>(0)
+  const [expenseMTD, setExpenseMTD] = useState<number>(0)
+  const [catEntries, setCatEntries] = useState<{ category: string; sumCents: number; count?: number }[]>([])
+  const [monthly, setMonthly] = useState<{ label: string; incomeCents: number; expenseCents: number }[]>([])
+  const [baseMonth, setBaseMonth] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const fmt = (cents?: number, cur='EUR') =>
+    (typeof cents === 'number')
+      ? (cents/100).toLocaleString('de-DE', { style:'currency', currency: cur })
+      : '—'
 
   useEffect(() => {
-    const now = new Date();
-    const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    const to = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    http.get(`/api/categories/breakdown?from=${from}&to=${to}`).then((data) => setBreakdown((data as any).items || [])).catch(() => {});
-    http.get('/api/transactions?limit=20').then((data) => setRecentRows((data as any).items || (data as any).rows || [])).catch(() => {});
-    http.get('/api/summary/balance').then((data) => setMtd({ monthToDateSpend: (data as any).monthToDateSpend, lastMonthSpend: (data as any).lastMonthSpend })).catch(() => {});
-  }, []);
+    let cancelled = false
+    ;(async () => {
+      try {
+        const [txsResp, balResp, monsResp] = await Promise.all([
+          fetch('/api/transactions?limit=10').then(r => r.json()).catch(() => ({ data: [] })),
+          apiSummary.balance().catch(() => ({ balanceCents: 0, currency: 'EUR' })),
+          apiSummary.months6().catch(() => ({ baseMonth: null, series: [] })),
+        ])
+        if (cancelled) return
+        setRecent(Array.isArray(txsResp?.data) ? (txsResp.data as any[]) : [])
+        setBalance((balResp?.balanceCents as number) ?? 0)
+        setBaseMonth(monsResp?.baseMonth ?? null)
+        setMonthly(Array.isArray(monsResp?.series) ? monsResp.series : [])
+        try {
+          const m = await apiSummary.month(monsResp?.baseMonth ?? undefined)
+          setIncomeMTD(m.incomeCents ?? 0)
+          setExpenseMTD(m.expenseCents ?? 0)
+        } catch {}
+        try {
+          const catsResp = await apiSummary.categories()
+          setCatEntries((catsResp?.items ?? []).map(i => ({ category: i.category, sumCents: i.spendCents })))
+        } catch {}
+        setError(null)
+      } catch {
+        if (!cancelled) setError('Fehler beim Laden der Übersicht.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
+  const money = (n: number) => (n/100).toLocaleString('de-DE', { style:'currency', currency: 'EUR' })
+  const pieData = useMemo(() => (catEntries || []).filter(e => (e.category || 'other') !== 'income').map(e => ({ label: e.category || 'other', value: Math.max(0, e.sumCents) })), [catEntries])
+  const barData = useMemo(() => (monthly || []).map(m => ({ label: m.label, value: Math.abs(m.expenseCents) })), [monthly])
+
+  if (loading) return <div>Laden…</div>
+  if (error) return <div>{error}</div>
   return (
-    <DashboardLayout>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-        <FinancialHealthScore />
-        <NetWorthCard />
-        <QuickActions />
+    <div>
+      <h1>Nimbus Finance</h1>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginTop: 12 }}>
+        <Kpi title="Saldo gesamt" value={money(balance)} />
+        <Kpi title={`Einnahmen (${baseMonth ?? 'Monat'})`} value={money(incomeMTD)} />
+        <Kpi title={`Ausgaben (${baseMonth ?? 'Monat'})`} value={money(expenseMTD)} />
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2">
-          <SpendingByCategory items={breakdown} />
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap: 16, marginTop: 16 }}>
+        <div>
+          <h3>Ausgaben nach Kategorien</h3>
+          <PieChart data={pieData} />
         </div>
-        <BillsOverview items={[]} />
+        <div>
+          <h3>Monatsüberblick (6M)</h3>
+          <BarChart data={barData} />
+        </div>
       </div>
-      <div className="mt-4">
-        <RecentTransactions rows={recentRows} />
-      </div>
-    </DashboardLayout>
-  );
+
+      {import.meta.env.DEV && (
+        <div style={{ marginTop: 12 }}>
+          <button onClick={async () => { await apiDev.reset(); location.reload(); }}>Daten zurücksetzen</button>
+        </div>
+      )}
+
+      <h3 style={{ marginTop: 16 }}>Letzte Buchungen</h3>
+      <ul style={{paddingLeft:16}}>
+        {recent.map((t, i) => (
+          <li key={t.id ?? i}>
+            {t.bookingDate ?? '—'} · {t.purpose ?? '—'} · <strong>{fmt(t.amountCents, t.currency)}</strong>
+          </li>
+        ))}
+        {recent.length === 0 && <li>Keine Daten. Lade eine CSV hoch.</li>}
+      </ul>
+    </div>
+  )
+}
+
+function Kpi({ title, value }: { title: string; value: string }) {
+  return (
+    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+      <div style={{ fontSize: 12, opacity: .7 }}>{title}</div>
+      <div style={{ fontSize: 20, fontWeight: 600 }}>{value}</div>
+    </div>
+  )
 }
 
 

@@ -11,7 +11,7 @@
     "strict": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*", "tests/**/*"],
+  "include": ["src/server.ts", "src/db.ts", "src/types/**/*.d.ts"],
   "exclude": ["node_modules", "dist"]
 }
 

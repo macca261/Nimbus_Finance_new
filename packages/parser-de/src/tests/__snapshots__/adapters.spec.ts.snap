@@ -1,0 +1,181 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`German CSV adapters > Commerzbank CSV parses with correct adapter and amounts 1`] = `
+[
+  {
+    "accountIban": "DE02123456780000000000",
+    "amountCents": 300000,
+    "bookingDate": "2025-03-01",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "GEHALT ACME GMBH",
+    "rawCode": "Gehalt",
+    "valueDate": "2025-03-01",
+  },
+  {
+    "accountIban": "DE02123456780000000000",
+    "amountCents": -3124,
+    "bookingDate": "2025-03-02",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "REWE MARKT 123 BERLIN",
+    "rawCode": "Kartenzahlung",
+    "valueDate": "2025-03-02",
+  },
+  {
+    "accountIban": "DE02123456780000000000",
+    "amountCents": -990,
+    "bookingDate": "2025-03-03",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "KARTENENTGELT",
+    "rawCode": "Gebühr",
+    "valueDate": "2025-03-03",
+  },
+  {
+    "accountIban": "DE02123456780000000000",
+    "amountCents": 1234,
+    "bookingDate": "2025-03-03",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "ERSTATTUNG SHOP",
+    "rawCode": "Rückzahlung",
+    "valueDate": "2025-03-03",
+  },
+]
+`;
+
+exports[`German CSV adapters > DKB CSV parses with correct adapter and amounts 1`] = `
+[
+  {
+    "accountIban": "DE02123456780000000000",
+    "amountCents": 300000,
+    "bookingDate": "2025-03-01",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "Gutschrift GEHALT ACME GMBH",
+    "rawCode": "Gutschrift",
+    "valueDate": "2025-03-01",
+  },
+  {
+    "accountIban": "DE02123456780000000000",
+    "amountCents": -3124,
+    "bookingDate": "2025-03-02",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "Lastschrift REWE MARKT 123 BERLIN",
+    "rawCode": "Lastschrift",
+    "valueDate": "2025-03-02",
+  },
+  {
+    "accountIban": "DE02123456780000000000",
+    "amountCents": -990,
+    "bookingDate": "2025-03-03",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "Gebühr KARTENENTGELT",
+    "rawCode": "Gebühr",
+    "valueDate": "2025-03-03",
+  },
+  {
+    "accountIban": "DE02123456780000000000",
+    "amountCents": 1234,
+    "bookingDate": "2025-03-04",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "Überweisung ERSTATTUNG SHOP",
+    "rawCode": "Überweisung",
+    "valueDate": "2025-03-04",
+  },
+]
+`;
+
+exports[`German CSV adapters > ING CSV parses with correct adapter and amounts 1`] = `
+[
+  {
+    "accountIban": "DE02600000000000000000",
+    "amountCents": 300000,
+    "bookingDate": "2025-03-01",
+    "counterpartName": "ACME GMBH",
+    "currency": "EUR",
+    "purpose": "Gehalt",
+    "rawCode": "Gehalt",
+    "valueDate": "2025-03-01",
+  },
+  {
+    "accountIban": "DE02600000000000000000",
+    "amountCents": -3124,
+    "bookingDate": "2025-03-02",
+    "counterpartName": "REWE MARKT",
+    "currency": "EUR",
+    "purpose": "Kartenzahlung",
+    "rawCode": "Kartenzahlung",
+    "valueDate": "2025-03-02",
+  },
+  {
+    "accountIban": "DE02600000000000000000",
+    "amountCents": -990,
+    "bookingDate": "2025-03-03",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "Gebühr",
+    "rawCode": "Gebühr",
+    "valueDate": "2025-03-03",
+  },
+  {
+    "accountIban": "DE02600000000000000000",
+    "amountCents": 1234,
+    "bookingDate": "2025-03-04",
+    "counterpartName": "SHOP",
+    "currency": "EUR",
+    "purpose": "Erstattung",
+    "rawCode": "Erstattung",
+    "valueDate": "2025-03-04",
+  },
+]
+`;
+
+exports[`German CSV adapters > Sparkasse CSV parses with correct adapter and amounts 1`] = `
+[
+  {
+    "accountIban": "",
+    "amountCents": 300000,
+    "bookingDate": "2025-03-01",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "Gutschrift GEHALT ACME GMBH",
+    "rawCode": "Gutschrift",
+    "valueDate": "2025-03-01",
+  },
+  {
+    "accountIban": "",
+    "amountCents": -3124,
+    "bookingDate": "2025-03-02",
+    "counterpartName": "REWE MARKT 123",
+    "currency": "EUR",
+    "purpose": "Lastschrift REWE MARKT 123 BERLIN",
+    "rawCode": "Lastschrift",
+    "valueDate": "2025-03-02",
+  },
+  {
+    "accountIban": "",
+    "amountCents": -990,
+    "bookingDate": "2025-03-03",
+    "counterpartName": "SPK",
+    "currency": "EUR",
+    "purpose": "Gebühr KARTENENTGELT",
+    "rawCode": "Gebühr",
+    "valueDate": "2025-03-03",
+  },
+  {
+    "accountIban": "",
+    "amountCents": 1234,
+    "bookingDate": "2025-03-04",
+    "counterpartName": "",
+    "currency": "EUR",
+    "purpose": "Überweisung ERSTATTUNG SHOP",
+    "rawCode": "Überweisung",
+    "valueDate": "2025-03-04",
+  },
+]
+`;

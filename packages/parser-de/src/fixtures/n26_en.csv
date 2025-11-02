@@ -1,0 +1,5 @@
+Date,Payee,Account number,Transaction type,Payment reference,Amount (EUR),Amount (Foreign Currency),Type,Product
+2024-03-01,REWE,,Card Payment,, -15.67,,card,Standard
+2024-03-02,Salary,,Transfer,,3200.00,,transfer,Standard
+
+
