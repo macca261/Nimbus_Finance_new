@@ -1,0 +1,24 @@
+/* web/src/styles/theme.css (import this globally) */
+:root {
+  --bg: #0b0d11;
+  --panel: #12151b;
+  --text: #e6e7ea;
+  --muted: #a7b1c2;
+  --accent: #6c8cff;
+  --border: #1e2430;
+}
+
+:root[data-theme='light'] {
+  --bg: #f7f9fc;
+  --panel: #ffffff;
+  --text: #0c1020;
+  --muted: #4b5563;
+  --accent: #2a5af9;
+  --border: #e6e8ee;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
