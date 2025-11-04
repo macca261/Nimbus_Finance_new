@@ -4,22 +4,25 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { makeTestApp, resetDb } from './helpers/test-utils';
 
+let app: any; let db: any;
 beforeEach(() => {
-  resetDb();
+  const made = makeTestApp();
+  app = made.app; db = made.db;
+  resetDb(db);
 });
 
 describe('CSV import endpoint', () => {
   it('uploads CSV and aggregates correctly', async () => {
-    const { app } = makeTestApp();
     const samplePath = path.join(__dirname, 'fixtures', 'sample.csv');
     if (!fs.existsSync(samplePath)) {
       fs.mkdirSync(path.dirname(samplePath), { recursive: true });
       fs.writeFileSync(samplePath, `Buchungstag;Verwendungszweck;Betrag;Währung\n01.03.2025;GEHALT;3000,00;EUR\n02.03.2025;REWE;-31,24;EUR\n`);
     }
 
+    const buf = fs.readFileSync(samplePath);
     const res = await request(app)
       .post('/api/imports/csv')
-      .attach('file', samplePath);
+      .attach('file', buf, 'sample.csv');
 
     expect(res.status).toBe(200);
     const body = res.body || {} as any;

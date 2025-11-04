@@ -23,9 +23,10 @@ function monthly() {
 function categories() {
   return db.prepare(`
     SELECT COALESCE(NULLIF(TRIM(category),''),'Other') AS category,
-           ABS(COALESCE(SUM(CASE WHEN amountCents<0 THEN amountCents ELSE 0 END),0)) AS spend
-    FROM transactions GROUP BY category ORDER BY spend DESC
-  `).all() as { category: string; spend: number }[];
+           SUM(CASE WHEN amountCents<0 THEN amountCents ELSE 0 END) AS spendCents,
+           SUM(CASE WHEN amountCents>0 THEN amountCents ELSE 0 END) AS incomeCents
+    FROM transactions GROUP BY category ORDER BY ABS(SUM(CASE WHEN amountCents<0 THEN amountCents ELSE 0 END)) DESC
+  `).all() as { category: string; spendCents: number | null; incomeCents: number | null }[];
 }
 
 function balance() {
@@ -43,14 +44,16 @@ describe('summaries', () => {
   it('seeded DB -> non-zero', () => {
     const now = new Date();
     const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-    db.prepare(`INSERT INTO transactions (bookingDate, amountCents, currency) VALUES (?,?,?)`).run(`${ym}-01`, 1000, 'EUR');
-    db.prepare(`INSERT INTO transactions (bookingDate, amountCents, currency, category) VALUES (?,?,?,?)`).run(`${ym}-02`, -500, 'EUR', 'Groceries');
+    db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, category) VALUES (?,?,?,?,?,?)`).run(`${ym}-01`, `${ym}-01`, 1000, 'EUR', 'Gehalt', 'Income');
+    db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, category) VALUES (?,?,?,?,?,?)`).run(`${ym}-02`, `${ym}-02`, -500, 'EUR', 'REWE Einkauf', 'Groceries');
     expect(balance()).toBe(500);
     const m = monthly();
     expect(m.length).toBe(6);
     expect(m[m.length-1].inc).toBeGreaterThan(0);
     const c = categories();
     expect(c.length).toBeGreaterThan(0);
+    const incomeRow = c.find(r => r.category === 'Income');
+    expect(incomeRow?.incomeCents).toBeGreaterThan(0);
   });
 });
 

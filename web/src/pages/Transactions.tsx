@@ -39,7 +39,13 @@ export default function TransactionsPage() {
           {items.map((t, i) => (
             <tr key={t.id ?? i}>
               <td style={{ padding: '6px 4px' }}>{t.bookingDate ?? '—'}</td>
-              <td style={{ padding: '6px 4px' }}>{t.purpose ?? '—'}</td>
+              <td style={{ padding: '6px 4px' }}>
+                <span title={t.purpose ?? ''}>
+                  {String(t.purpose ?? '—').length > 60
+                    ? String(t.purpose ?? '').slice(0, 60) + '…'
+                    : String(t.purpose ?? '—')}
+                </span>
+              </td>
               <td
                 style={{
                   padding: '6px 4px',

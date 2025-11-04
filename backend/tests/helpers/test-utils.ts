@@ -1,14 +1,18 @@
 import createApp from '../../src/server';
-import { db } from '../../src/db';
+import { openDb, initDb, resetDb } from '../../src/db';
+import path from 'node:path';
 
-export function resetDb() {
-  db.exec(`DELETE FROM transactions`);
-}
+export { resetDb };
 
 export function makeTestApp() {
-  resetDb();
-  const app = createApp();
-  return { app };
+  const db = openDb();
+  initDb(db);
+  const app = createApp({ db });
+  return { app, db };
+}
+
+export function fixturePath(rel: string) {
+  return path.join(process.cwd(), 'backend', 'tests', 'fixtures', rel);
 }
 
 

@@ -1,0 +1,9 @@
+;
+"Umsätze Girokonto";"Zeitraum: 30 Tage";
+"Neuer Kontostand";"97,93 EUR";
+
+"Buchungstag";"Wertstellung (Valuta)";"Vorgang";"Buchungstext";"Umsatz in EUR"
+"01.03.2025";"01.03.2025";"Gutschrift";"GEHALT ACME GMBH";"3.000,00"
+"02.03.2025";"02.03.2025";"Kartenverfügung";"REWE MARKT 123 BERLIN";"-31,24"
+"03.03.2025";"03.03.2025";"Gebühr";"KARTENENTGELT";"9,90-"
+

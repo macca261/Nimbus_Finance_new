@@ -2,9 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import dotenv from 'dotenv';
-import { insertTransactions, getBalance, getRecentTransactions, clearAll } from './db';
+import { db as defaultDb, insertTransactions, getBalance, getRecentTransactions, clearAll, openDb, initDb, ensureSchema, dbPath } from './db';
+import { insertManyTransactions, type InsertRow } from './insert';
+import { evaluateAll } from './services/achievements';
 import summaryRouter from './routes/summary';
-import { categorize } from './services/categorizer';
+import { inferCategory } from './categorize';
+import { TextDecoder } from 'node:util';
+import os from 'node:os';
 
 dotenv.config();
 
@@ -45,6 +49,15 @@ function parseDeDate(s?: string): string | undefined {
   return undefined;
 }
 
+function toCents(input: unknown): number {
+  if (typeof input === 'number' && Number.isFinite(input)) return Math.round(input * 100);
+  const s = String(input ?? '').replace(/[^\d,.-]/g, '').trim();
+  if (!s) return NaN;
+  const normalized = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+  const n = Number(normalized);
+  return Number.isFinite(n) ? Math.round(n * 100) : NaN;
+}
+
 function makeDefaultParser(): Parser {
   try {
     // Try CJS require of installed parser; if ESM-only, this may throw.
@@ -56,7 +69,7 @@ function makeDefaultParser(): Parser {
           const r = real.parseBufferAuto(buf, opts);
           // real parser may be sync; normalize
           const out = await Promise.resolve(r);
-          return { adapterId: out.adapterId || 'parser', rows: out.rows } as ParseResult;
+          return { adapterId: out.adapterId || 'parser', rows: out.rows, _debug: (out as any)._debug } as any;
         },
       } as Parser;
     }
@@ -98,9 +111,21 @@ function makeDefaultParser(): Parser {
   } as Parser;
 }
 
-export function createApp(deps?: { parser?: Parser }) {
+export function createApp(deps?: { db?: any; parser?: Parser }) {
   const app = express();
   const parser: Parser = deps?.parser ?? makeDefaultParser();
+  const db = deps?.db ?? (process.env.NODE_ENV === 'test' ? openDb() : defaultDb);
+  if (process.env.NODE_ENV === 'test' && !deps?.db) initDb(db);
+  (app as any).locals.db = db;
+
+  // Ensure schema is properly set up right after connecting
+  ensureSchema(db);
+
+  try { console.log('[db] using', dbPath); } catch {}
+  try {
+    console.log('[server] pid=', process.pid, 'cwd=', process.cwd(), 'dbPath=', dbPath);
+    console.log('[server] env TEST_DB=', process.env.TEST_DB, 'NIMBUS_DB_PATH=', process.env.NIMBUS_DB_PATH);
+  } catch {}
 
 // CORS
   app.use(cors({
@@ -122,10 +147,10 @@ export function createApp(deps?: { parser?: Parser }) {
   console.log('Mounted: /api/summary/*');
 
 // Health
-  app.get('/api/health', (_req, res) => {
+  app.get('/api/health', (req, res) => {
   try {
     const version = '0.1.0';
-    const { db } = require('./db');
+    const db = (req.app as any).locals.db;
     let tables: string[] = [];
     let txCount = 0;
     try {
@@ -133,10 +158,37 @@ export function createApp(deps?: { parser?: Parser }) {
       const r = db.prepare(`SELECT COUNT(1) AS c FROM transactions`).get() as { c: number };
       txCount = r?.c ?? 0;
     } catch {}
-    res.json({ ok: true, version, db: { ok: true, tables, counts: { tx: txCount } } });
+    res.json({ ok: true, version, dbPath, db: { ok: true, tables, counts: { tx: txCount } } });
   } catch (e: any) {
-    res.json({ ok: false, version: '0.1.0', message: e?.message || 'unhealthy', db: { ok: false, tables: [], counts: { tx: 0 } } });
+    res.json({ ok: false, version: '0.1.0', message: e?.message || 'unhealthy', dbPath, db: { ok: false, tables: [], counts: { tx: 0 } } });
   }
+  });
+
+  // Deep diagnostics
+  app.get('/api/debug/info', (_req, res) => {
+    try {
+      const tables = ((db as any).prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`).all() as { name: string }[]).map(r => r.name);
+      const count = ((db as any).prepare('SELECT COUNT(*) AS c FROM transactions').get() as { c: number })?.c ?? 0;
+      res.json({
+        data: {
+          pid: process.pid,
+          cwd: process.cwd(),
+          node: process.version,
+          dbPath,
+          fileExists: (() => { try { return require('node:fs').existsSync(dbPath); } catch { return false; } })(),
+          tables,
+          count,
+          env: {
+            NODE_ENV: process.env.NODE_ENV || null,
+            TEST_DB: process.env.TEST_DB || null,
+            NIMBUS_DB_PATH: process.env.NIMBUS_DB_PATH || null,
+          },
+          host: { platform: process.platform, arch: process.arch, user: (() => { try { return os.userInfo().username; } catch { return 'unknown'; } })() }
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'debug info failed' });
+    }
   });
 
 // Diag
@@ -151,57 +203,146 @@ const upload = multer({
 });
 
   app.post('/api/imports/csv', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ code: 'NO_FILE', message: 'field "file" is required' });
-    }
-    const buffer = req.file.buffer;
-    let parsed;
-      try {
-        parsed = await parser.parseBufferAuto(buffer, { accountId: 'test' });
-      } catch (e: any) {
-        return res.status(422).json({ error: 'parse_failed', message: String(e?.message ?? e) });
-      }
-    if ('needsMapping' in parsed) {
-      return res.json({ needsMapping: true, headers: parsed.headers, sample: parsed.sample });
-    }
-    const canonical = (parsed.rows as any[]).map((r) => ({
-      bookingDate: r.bookingDate ?? null,
-      valueDate: r.valueDate ?? null,
-      amountCents: r.amountCents ?? 0,
-      currency: r.currency ?? 'EUR',
-      purpose: r.purpose ?? null,
-      counterpartName: r.counterpartName ?? null,
-      accountIban: r.accountIban ?? null,
-      rawCode: r.rawCode ?? null,
-    })).map(r => {
-      const cat = categorize(r.purpose || '', r.counterpartName || undefined);
-      return { ...r, category: cat.category, categoryConfidence: cat.confidence };
-    });
     try {
-      const { inserted, duplicates } = insertTransactions(canonical as any);
-        const payload = { adapterId: parsed.adapterId, imported: inserted, duplicates, total: (parsed.rows?.length ?? 0) };
+      if (!req.file) {
+        return res.status(400).json({ error: 'Datei fehlt. Feld "file" ist erforderlich.' });
+      }
+      try {
+        console.log('[import] received file', {
+          hasFile: Boolean(req.file),
+          size: req.file?.size,
+          mimetype: req.file?.mimetype,
+          originalname: req.file?.originalname,
+        });
+      } catch {}
+      const buf = req.file.buffer;
+
+      // Parse via injected/default parser; never let parser errors 500
+      let parsed: any;
+      try {
+        parsed = await parser.parseBufferAuto(buf, { accountId: 'default' });
+        try {
+          const keys = parsed && typeof parsed === 'object' ? Object.keys(parsed) : [];
+          console.log('[import] parser result keys', keys);
+          console.log('[import] sample result', JSON.stringify({ adapterId: parsed?.adapterId, rowsCount: Array.isArray(parsed?.rows) ? parsed.rows.length : 0 }));
+        } catch {}
+      } catch (e: any) {
+        console.error('[import] parse error:', e?.message || e);
+        // Try fallback parser before failing
+        try {
+          const rows = fallbackParseGermanCSV(buf);
+          if (Array.isArray(rows) && rows.length > 0) {
+            try { console.info('[import] using fallback CSV parser. rows=', rows.length); } catch {}
+            const before = ((req.app as any).locals.db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? 0;
+            const insert = (req.app as any).locals.db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose) VALUES (?,?,?,?,?)`);
+            const tx = (req.app as any).locals.db.transaction((arr: any[]) => { for (const t of arr) insert.run(t.bookingDate, t.valueDate ?? null, t.amountCents, t.currency ?? 'EUR', t.purpose ?? ''); });
+            tx(rows);
+            const after = ((req.app as any).locals.db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? before;
+            const range = (req.app as any).locals.db.prepare(`SELECT MIN(bookingDate) AS minDate, MAX(bookingDate) AS maxDate FROM transactions`).get() as { minDate?: string; maxDate?: string };
+            console.log('[import] dbPath=', dbPath, 'added=', (after - before), 'now count=', after, 'range=', range);
+            return res.json({ data: { adapterId: 'fallback.csv', imported: (after - before), duplicates: 0, dbPath } });
+          }
+        } catch {}
+        return res.status(422).json({ error: 'CSV konnte nicht verarbeitet werden. Bitte prüfen Sie Trennzeichen (;) und Dezimalformat (z.B. 1.234,56).' });
+      }
+
+      const { adapterId, rows, _debug } = parsed || {};
+      console.info('[import] adapter:', adapterId, 'count:', Array.isArray(rows) ? rows.length : 0, 'debug:', _debug || null);
+
+      if (!adapterId) {
+        return res.status(415).json({ error: 'unsupported_format', message: 'Datei-Format nicht erkannt.' });
+      }
+      if (!Array.isArray(rows) || rows.length === 0) {
+        // Fallback when primary parser yields 0 rows
+        try {
+          console.warn('[import] parser returned 0 rows – using fallback CSV parser');
+          const fallbackRows = fallbackParseGermanCSV(buf);
+          if (Array.isArray(fallbackRows) && fallbackRows.length > 0) {
+            const before = ((req.app as any).locals.db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? 0;
+            const insert = (req.app as any).locals.db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose) VALUES (?,?,?,?,?)`);
+            const tx = (req.app as any).locals.db.transaction((arr: any[]) => { for (const t of arr) insert.run(t.bookingDate, t.valueDate ?? null, t.amountCents, t.currency ?? 'EUR', t.purpose ?? ''); });
+            tx(fallbackRows);
+            const after = ((req.app as any).locals.db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? before;
+            const range = (req.app as any).locals.db.prepare(`SELECT MIN(bookingDate) AS minDate, MAX(bookingDate) AS maxDate FROM transactions`).get() as { minDate?: string; maxDate?: string };
+            console.log('[import] dbPath=', dbPath, 'added=', (after - before), 'now count=', after, 'range=', range);
+            return res.json({ data: { adapterId: adapterId || 'fallback.csv', imported: (after - before), duplicates: 0, dbPath } });
+          }
+        } catch {}
+        return res.status(422).json({
+          error: 'parse_error',
+          message: `Parser erkannte ${adapterId}, aber keine Buchungen gefunden.`,
+          details: _debug || undefined,
+        });
+      }
+
+      const list = Array.isArray(rows) ? rows : [];
+      const txs = list.map((r: any) => ({
+        bookingDate: r?.bookingDate || r?.Buchungstag || r?.date || r?.buchung || r?.Datum || null,
+        valueDate: r?.valueDate || r?.Valuta || r?.valuta || r?.Wertstellung || r?.date || null,
+        amountCents: (Number.isFinite(r?.amountCents) ? Math.round(Number(r?.amountCents)) : toCents(r?.amount ?? r?.Betrag ?? r?.umsatz ?? r?.Amount)),
+        currency: r?.currency || r?.Währung || r?.Currency || 'EUR',
+        purpose: (r?.purpose ?? r?.Verwendungszweck ?? r?.text ?? r?.Buchungstext ?? '').toString().trim() || null,
+        counterpartName: (r?.name ?? r?.Empfaenger ?? r?.Beguenstigter ?? r?.['Begünstigter/Zahlungspflichtiger'] ?? '').toString().trim() || null,
+        accountIban: r?.iban || r?.IBAN || null,
+        rawCode: r?.code || r?.Umsatzart || r?.Kennzeichen || null,
+      })).filter(t => Number.isFinite(t.amountCents) && t.bookingDate);
+
+      if (txs.length === 0) {
+        const aid = typeof parsed?.adapterId === 'string' ? parsed.adapterId : undefined;
+        if (aid) return res.status(422).json({ error: `Parser erkannte '${aid}', aber es wurden keine Zeilen erkannt (Header/Trennzeichen prüfen).` });
+        return res.status(415).json({ error: 'Unsupported file format.' });
+      }
+
+      try {
+        console.log('[import] writing to db:', dbPath);
+        console.log('[import] adapter=', adapterId, 'parsed=', rows.length);
+        const mappedRows: InsertRow[] = txs.map(r => {
+          const normalizedPurpose = (r.purpose ?? '').toString().trim();
+          const normalized: InsertRow = {
+            bookingDate: r.bookingDate,
+            valueDate: r.valueDate ?? r.bookingDate,
+            amountCents: r.amountCents,
+            currency: r.currency ?? 'EUR',
+            purpose: normalizedPurpose,
+            counterpartName: r.counterpartName ?? null,
+            accountIban: r.accountIban ?? null,
+            rawCode: r.rawCode ?? null,
+            category: null,
+          };
+          const category = inferCategory({
+            purpose: normalized.purpose,
+            counterpartName: normalized.counterpartName ?? undefined,
+            rawCode: normalized.rawCode ?? undefined,
+          });
+          normalized.category = category;
+          return normalized;
+        });
+        const { inserted, duplicates } = insertManyTransactions((req.app as any).locals.db, mappedRows);
+        console.log('[import] result inserted=', inserted, 'duplicates=', duplicates);
+        const payload = { adapterId: parsed?.adapterId, imported: inserted, duplicates };
+        try { await evaluateAll(); } catch {}
         return res.json({ data: payload });
-    } catch (e: any) {
-      return res.status(500).json({ error: e?.message || 'DB insert failed' });
+      } catch (e: any) {
+        return res.status(500).json({ error: e?.message || 'DB insert failed' });
+      }
+    } catch (err) {
+      // As a last resort, map to 422 instead of 500
+      console.error('[import] unexpected error:', (err as any)?.message || err);
+      return res.status(422).json({ error: 'Import fehlgeschlagen.' });
     }
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: (err as any)?.message || 'Unexpected error' });
-  }
   });
 
 // Summary
-  app.get('/api/summary/balance', (_req, res) => {
+  app.get('/api/summary/balance', (req, res) => {
   // total balance
-  const total = getBalance();
+  const total = getBalance((req.app as any).locals.db);
   // income/expense MTD
   const now = new Date();
   const from = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
   const to = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
   // compute via SQL quickly
   // Using direct db here to avoid adding new API in db.ts
-  const { db } = require('./db');
+  const db = (req.app as any).locals.db;
   const row = db.prepare(`
     SELECT 
       COALESCE(SUM(CASE WHEN amountCents > 0 THEN amountCents ELSE 0 END),0) AS income,
@@ -209,15 +350,15 @@ const upload = multer({
     FROM transactions
     WHERE bookingDate >= ? AND bookingDate <= ?
   `).get(from, to) as { income: number; expense: number };
-    res.json({ balanceCents: total.balanceCents, incomeCentsMTD: row.income, expenseCentsMTD: row.expense });
+    res.json({ data: { balanceCents: total.balanceCents, currency: 'EUR' } });
   });
 
 // Monthly (current) income/expense
-app.get('/api/summary/month', (_req, res) => {
+app.get('/api/summary/month', (req, res) => {
   const now = new Date();
   const from = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
   const to = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-  const { db } = require('./db');
+  const db = (req.app as any).locals.db;
   const row = db.prepare(`
     SELECT 
       COALESCE(SUM(CASE WHEN amountCents > 0 THEN amountCents ELSE 0 END),0) AS incomeCents,
@@ -225,13 +366,14 @@ app.get('/api/summary/month', (_req, res) => {
     FROM transactions
     WHERE bookingDate >= ? AND bookingDate <= ?
   `).get(from, to) as { incomeCents: number; expenseCents: number };
-  res.json(row);
+  const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  res.json({ month: ym, incomeCents: row.incomeCents, expenseCents: row.expenseCents });
 });
 
 // Transactions
   app.get('/api/transactions', (req, res) => {
   const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10));
-  const rows = getRecentTransactions(limit);
+  const rows = getRecentTransactions(limit, (req.app as any).locals.db);
     res.json({ data: rows });
   });
 
@@ -243,7 +385,7 @@ app.get('/api/categories/breakdown', (req, res) => {
   if (from) { where.push('bookingDate >= ?'); params.push(from); }
   if (to) { where.push('bookingDate <= ?'); params.push(to); }
   const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  const { db } = require('./db');
+  const db = (req.app as any).locals.db;
   const rows = db.prepare(`
     SELECT category as category, COUNT(*) as count, COALESCE(SUM(amountCents),0) as sumCents
     FROM transactions
@@ -267,7 +409,7 @@ app.get('/api/summary/monthly', (req, res) => {
     const end = `${endDate.getUTCFullYear()}-${String(endDate.getUTCMonth()+1).padStart(2,'0')}-${String(endDate.getUTCDate()).padStart(2,'0')}`;
     buckets.push({ month, start, end });
   }
-  const { db } = require('./db');
+  const db = (req.app as any).locals.db;
   const out = buckets.map(b => {
     const r = db.prepare(`
       SELECT 
@@ -277,11 +419,11 @@ app.get('/api/summary/monthly', (req, res) => {
     `).get(b.start, b.end) as { income: number; expense: number };
     return { month: b.month, incomeCents: r.income, expenseCents: r.expense };
   });
-  res.json(out);
+  res.json({ data: out });
 });
 
 // Alias: monthly-6 shape with { series }
-app.get('/api/summary/monthly-6', (_req, res) => {
+app.get('/api/summary/monthly-6', (req, res) => {
   const months = 6;
   const now = new Date();
   const buckets: { month: string; start: string; end: string }[] = [];
@@ -293,7 +435,7 @@ app.get('/api/summary/monthly-6', (_req, res) => {
     const end = `${endDate.getUTCFullYear()}-${String(endDate.getUTCMonth()+1).padStart(2,'0')}-${String(endDate.getUTCDate()).padStart(2,'0')}`;
     buckets.push({ month, start, end });
   }
-  const { db } = require('./db');
+  const db = (req.app as any).locals.db;
   const series = buckets.map(b => {
     const r = db.prepare(`
       SELECT 
@@ -304,19 +446,159 @@ app.get('/api/summary/monthly-6', (_req, res) => {
     const label = b.month.slice(5);
     return { label, incomeCents: r.incomeCents, expenseCents: r.expenseCents };
   });
-  res.json({ series });
+  const baseMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  res.json({ baseMonth, series });
 });
 
 // Dev reset
-  app.delete('/api/dev/reset', (_req, res) => {
-  clearAll();
+  app.delete('/api/dev/reset', (req, res) => {
+  clearAll((req.app as any).locals.db);
   res.json({ ok: true });
   });
 
-  app.post('/api/dev/reset', (_req, res) => {
-  clearAll();
+  app.post('/api/dev/reset', (req, res) => {
+  clearAll((req.app as any).locals.db);
   res.json({ ok: true });
   });
+
+  // Debug: reset (DEV only)
+  app.post('/api/debug/reset', (req, res) => {
+    if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'forbidden' });
+    try {
+      const db = (req.app as any).locals.db;
+      db.exec('DELETE FROM transactions');
+      try { db.prepare('DELETE FROM sqlite_sequence WHERE name = ?').run('transactions'); } catch {}
+      const count = (db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? 0;
+      res.json({ data: { reset: true, count, dbPath } });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'reset failed' });
+    }
+  });
+
+  app.post('/api/dev/eval', async (_req, res) => {
+    try { await evaluateAll(); } catch {}
+    res.json({ ok: true });
+  });
+
+  app.get('/api/achievements', (req, res) => {
+    try {
+      const db = (req.app as any).locals.db;
+      const rows = db.prepare(`
+        SELECT a.code, a.title, a.description, a.tier,
+               ua.unlockedAt, COALESCE(ua.progress,0) AS progress
+        FROM achievements a
+        LEFT JOIN user_achievements ua ON ua.achievementCode = a.code
+        ORDER BY CASE a.tier WHEN 'gold' THEN 3 WHEN 'silver' THEN 2 ELSE 1 END DESC, a.code ASC
+      `).all() as { code: string; title: string; description: string; tier: string; unlockedAt?: string; progress: number }[];
+      const data = rows.map(r => ({ code: r.code, title: r.title, description: r.description, tier: r.tier as any, unlocked: Boolean(r.unlockedAt), unlockedAt: r.unlockedAt || undefined, progress: r.progress ?? 0 }));
+      res.json({ data });
+    } catch {
+      res.json({ data: [] });
+    }
+  });
+
+// Debug: last rows
+  app.get('/api/debug/rows', (req, res) => {
+    try {
+      const db = (req.app as any).locals.db;
+      const limit = Math.max(1, Math.min(200, Number((req.query as any)?.limit) || 5));
+      const rows = db.prepare(`
+        SELECT id, bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, rawCode, createdAt
+        FROM transactions
+        ORDER BY COALESCE(createdAt, bookingDate) DESC, id DESC
+        LIMIT ?
+      `).all(limit) as any[];
+      const count = (db.prepare(`SELECT COUNT(1) AS c FROM transactions`).get() as { c: number })?.c ?? 0;
+      res.json({ data: { rows, count, dbPath } });
+    } catch {
+      res.json({ data: { rows: [], count: 0, dbPath } });
+    }
+  });
+
+// Debug: seed rows (3 known rows)
+  app.post('/api/debug/seed', (req, res) => {
+    try {
+      const db = (req.app as any).locals.db;
+      const sample = [
+        { bookingDate: '2025-03-01', valueDate: '2025-03-01', amountCents: 300000, currency: 'EUR', purpose: 'GEHALT ACME GMBH' },
+        { bookingDate: '2025-03-02', valueDate: '2025-03-02', amountCents: -3124,  currency: 'EUR', purpose: 'REWE MARKT 123 BERLIN' },
+        { bookingDate: '2025-03-03', valueDate: '2025-03-03', amountCents: -990,   currency: 'EUR', purpose: 'KARTENENTGELT MÄRZ' },
+      ];
+      const { inserted, duplicates } = insertManyTransactions(db, sample);
+      res.json({ data: { inserted, duplicates } });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'Seed fehlgeschlagen' });
+    }
+  });
+
+// Debug stats
+  app.get('/api/debug/stats', (req, res) => {
+    try {
+      const db = (req.app as any).locals.db;
+      const row = db.prepare(`SELECT COUNT(1) AS count, MIN(bookingDate) AS minDate, MAX(bookingDate) AS maxDate FROM transactions`).get() as { count: number; minDate?: string; maxDate?: string };
+      res.json({ data: { count: row.count || 0, minDate: row.minDate || null, maxDate: row.maxDate || null, dbPath } });
+    } catch {
+      res.json({ data: { count: 0, minDate: null, maxDate: null, dbPath } });
+    }
+  });
+
+  // Debug: schema
+  app.get('/api/debug/schema', (req, res) => {
+    try {
+      const db = (req.app as any).locals.db;
+      const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' ORDER BY name`).all() as { name: string }[];
+      const indexList = db.prepare(`PRAGMA index_list(transactions)`).all() as { name: string; unique: number }[];
+      const indexes = indexList.map(ix => ix.name);
+      res.json({ data: { tables: tables.map(t => t.name), indexes } });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'schema error' });
+    }
+  });
+
+  function fallbackParseGermanCSV(buf: Buffer) {
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: false } as any).decode(buf);
+    } catch {
+      text = buf.toString('latin1');
+    }
+    const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+    if (lines.length === 0) return [] as any[];
+    const header = lines[0].split(';').map(s => s.trim().toLowerCase());
+    const find = (re: RegExp) => header.findIndex(h => re.test(h));
+    const idx = {
+      booking: find(/buchung|buchungstag|buchungsdatum|date|datum/),
+      value:   find(/wert|valuta|valuedatum|valuedate/),
+      amount:  find(/betrag|amount|umsatz/),
+      purpose: find(/verwendungszweck|buchungstext|text|zweck|beschreibung/),
+      currency: find(/w[aä]hrung|currency/),
+    } as const;
+    const out: any[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const parts = lines[i].split(';').map(s => s.trim());
+      if (parts.length < 2) continue;
+      const booking = (idx.booking >= 0 ? parts[idx.booking] : parts[0]) || '';
+      const value   = idx.value >= 0 ? parts[idx.value] : booking;
+      const cur     = idx.currency >= 0 ? parts[idx.currency] : 'EUR';
+      const purpose = idx.purpose >= 0 ? parts[idx.purpose] : '';
+      const amtRaw  = idx.amount >= 0 ? parts[idx.amount] : '0';
+      const amtNorm = amtRaw.replace(/\./g, '').replace(',', '.').replace(/\s/g, '');
+      const amountCents = Math.round(parseFloat(amtNorm || '0') * 100);
+      const norm = (s: string) => {
+        const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+        if (m) {
+          const dd = m[1].padStart(2, '0');
+          const mm = m[2].padStart(2, '0');
+          const yyyy = m[3].length === 2 ? '20' + m[3] : m[3];
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        return s;
+      };
+      out.push({ bookingDate: norm(booking), valueDate: norm(value), amountCents, currency: cur || 'EUR', purpose });
+    }
+    try { console.log('[fallback] parsed rows:', out.length); } catch {}
+    return out.filter(r => Number.isFinite(r.amountCents) && /^\d{4}-\d{2}-\d{2}$/.test(String(r.bookingDate || '')));
+  }
 
 // Optional demo seed for development
 if (process.env.DEV_SEED === 'true') {

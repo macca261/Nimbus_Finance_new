@@ -1,17 +1,18 @@
 import { Router } from 'express';
-import { db } from '../db';
 import { startOfMonth, endOfMonth, firstDayMonthsAgo, lastDayMonthsAgo } from '../lib/dates';
 
 const summary = Router();
 
-function getLatestYm(): string | null {
+function getLatestYm(req: any): string | null {
+  const db = (req.app as any).locals.db;
   const row = db.prepare(`SELECT strftime('%Y-%m', MAX(bookingDate)) AS ym FROM transactions`).get() as { ym?: string };
   return row?.ym ?? null;
 }
 
 // GET /api/summary/balance -> { data: { balanceCents, currency } }
-summary.get('/balance', (_req, res) => {
+summary.get('/balance', (req, res) => {
   try {
+    const db = (req.app as any).locals.db;
     const row = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions`).get() as { sum?: number };
     res.json({ data: { balanceCents: row?.sum ?? 0, currency: 'EUR' } });
   } catch (e) {
@@ -22,8 +23,9 @@ summary.get('/balance', (_req, res) => {
 // GET /api/summary/month (income/expense for current month)
 summary.get('/month', (req, res) => {
   try {
-    const qMonth = (req.query as any).month as string | undefined || getLatestYm();
+    const qMonth = (req.query as any).month as string | undefined || getLatestYm(req);
     if (!qMonth) return res.json({ month: null, incomeCents: 0, expenseCents: 0 });
+    const db = (req.app as any).locals.db;
     const inc = db.prepare(`
       SELECT COALESCE(SUM(amountCents),0) AS sum
       FROM transactions
@@ -41,28 +43,26 @@ summary.get('/month', (req, res) => {
 });
 
 // GET /api/summary/categories -> { data: [{ category, amountCents }] }
-summary.get('/categories', (_req, res) => {
+summary.get('/categories', (req, res) => {
   try {
+    const db = (req.app as any).locals.db;
     const rows = db.prepare(`
-      SELECT 
-        COALESCE(
-          NULLIF(TRIM(category), ''),
-          CASE 
-            WHEN UPPER(purpose) LIKE '%REWE%' OR UPPER(purpose) LIKE '%ALDI%' OR UPPER(purpose) LIKE '%LIDL%' OR UPPER(purpose) LIKE '%EDEKA%' THEN 'Groceries'
-            WHEN UPPER(purpose) LIKE '%GEHALT%' OR UPPER(purpose) LIKE '%LOHN%' OR UPPER(purpose) LIKE '%SALARY%' THEN 'Income'
-            WHEN UPPER(purpose) LIKE '%MIETE%' OR UPPER(purpose) LIKE '%RENT%' THEN 'Rent'
-            WHEN UPPER(purpose) LIKE '%GEBÜHR%' OR UPPER(purpose) LIKE '%GEBU%HR%' OR UPPER(purpose) LIKE '%KARTENENTGELT%' THEN 'Fees'
-            WHEN amountCents > 0 THEN 'Income'
-            ELSE 'Other'
-          END
-        ) AS category,
-        ABS(COALESCE(SUM(CASE WHEN amountCents < 0 THEN amountCents ELSE 0 END),0)) AS spend
+      SELECT
+        COALESCE(NULLIF(TRIM(category), ''), 'Other') AS category,
+        SUM(CASE WHEN amountCents < 0 THEN amountCents ELSE 0 END) AS spendCents,
+        SUM(CASE WHEN amountCents > 0 THEN amountCents ELSE 0 END) AS incomeCents
       FROM transactions
       GROUP BY category
-      ORDER BY spend DESC
-      LIMIT 20
-    `).all() as { category: string | null; spend: number }[];
-    const data = (rows ?? []).map(r => ({ category: r.category ?? 'Other', amountCents: Math.trunc(r.spend ?? 0) }));
+      ORDER BY ABS(SUM(CASE WHEN amountCents < 0 THEN amountCents ELSE 0 END)) DESC
+      LIMIT 50
+    `).all() as { category: string; spendCents: number | null; incomeCents: number | null }[];
+    const data = (rows ?? []).map(r => {
+      const category = r.category || 'Other';
+      const spend = Math.abs(r.spendCents ?? 0);
+      const income = Math.trunc(r.incomeCents ?? 0);
+      const amountCents = category === 'Income' ? income : Math.trunc(spend);
+      return { category, amountCents };
+    });
     res.json({ data });
   } catch {
     res.json({ data: [] });
@@ -70,10 +70,11 @@ summary.get('/categories', (_req, res) => {
 });
 
 // GET /api/summary/monthly-6 (last 6 months income/expense)
-summary.get('/monthly-6', (_req, res) => {
+summary.get('/monthly-6', (req, res) => {
   try {
-    const latest = getLatestYm();
+    const latest = getLatestYm(req);
     if (!latest) return res.json({ baseMonth: null, series: [] });
+    const db = (req.app as any).locals.db;
     const rows = db.prepare(`
       WITH RECURSIVE months(ym, n) AS (
         SELECT ?, 0
@@ -103,8 +104,9 @@ summary.get('/monthly-6', (_req, res) => {
 summary.get('/monthly', (req, res) => {
   try {
     const months = Math.max(1, Math.min(24, Number((req.query as any).months) || 6));
-    const latest = getLatestYm();
+    const latest = getLatestYm(req);
     if (!latest) return res.json({ data: [] });
+    const db = (req.app as any).locals.db;
     const rows = db.prepare(`
       WITH RECURSIVE months(ym, n) AS (
         SELECT ?, 0

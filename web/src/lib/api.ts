@@ -66,3 +66,17 @@ export async function getTransactions(params: { limit?: number } = {}) {
 export const apiDev = {
   reset: () => fetch(`${base}/dev/reset`, { method:'POST' }).then(r => r.json()),
 };
+
+export type AchievementDto = {
+  code: string;
+  title: string;
+  description: string;
+  tier: 'bronze'|'silver'|'gold';
+  unlocked: boolean;
+  unlockedAt?: string;
+  progress: number;
+}
+
+export async function getAchievements(): Promise<{ data: AchievementDto[] }> {
+  return getJSON<{ data: AchievementDto[] }>(`/achievements`).catch(() => ({ data: [] as AchievementDto[] } as any));
+}

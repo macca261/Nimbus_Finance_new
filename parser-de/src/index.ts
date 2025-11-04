@@ -1,6 +1,8 @@
-import { parse } from 'csv-parse/sync';
+import { parse as csvParse } from 'csv-parse/sync';
 import iconv from 'iconv-lite';
 import { XMLParser } from 'fast-xml-parser';
+import { detect as detectComdirectGiro, parse as parseComdirectGiro, id as idComdirectGiro } from './adapters/comdirect-giro.js';
+import { detect as detectComdirectCsv, parse as parseComdirectCsv, id as idComdirect } from './adapters/comdirect-csv.js';
 
 function hasUtf8Bom(buffer: Buffer): boolean {
   return buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
@@ -41,41 +43,51 @@ function detectDelimiter(sample: string): string {
   const sc = (first.match(/;/g)||[]).length; const cc = (first.match(/,/g)||[]).length; return sc >= cc ? ';' : ',';
 }
 
-function csvToCanonical(text: string): { adapterId: string; canonical: any[] } {
+function csvToRows(text: string): { adapterId: string; rows: any[] } {
   const delimiter = detectDelimiter(text);
-  const rows: any[] = parse(text, { columns: true, skip_empty_lines: true, delimiter, bom: true, relax_quotes: true, relax_column_count: true, trim: true });
-  if (!rows.length) return { adapterId: 'csv.generic', canonical: [] };
+  const rows: any[] = csvParse(text, {
+    columns: true,
+    skip_empty_lines: true,
+    delimiter,
+    bom: true,
+    relax_quotes: true,
+    relax_column_count: true,
+    trim: true,
+  });
+  if (!rows.length) return { adapterId: 'csv.generic', rows: [] };
   const headers = Object.keys(rows[0]);
-  const has = (h: string) => headers.some(x => x.toLowerCase() === h.toLowerCase());
+  const headersNorm = headers.map(h => h.trim());
+  // generic fallbacks
   let adapterId = 'csv.generic';
+  const has = (h: string) => headersNorm.some(x => x.toLowerCase() === h.toLowerCase());
   if (has('Buchungstag') && has('Betrag')) adapterId = 'de.sparkasse.csv';
   else if (has('Buchung') && has('Wertstellung')) adapterId = 'de.ing.csv';
   else if (has('Date') && has('Amount')) adapterId = 'n26.csv';
-  const canonical = rows.map((r) => {
+  const mapped = rows.map((r) => {
     const booking = r['Buchungstag'] || r['Buchung'] || r['Date'] || r['Booking Date'] || r['Completed Date'];
     const value = r['Valutadatum'] || r['Wertstellung'] || r['Value Date'];
     const amountRaw = r['Betrag'] || r['Amount'] || r['Amount (EUR)'] || r['Umsatz (EUR)'] || r['Umsatz in EUR'];
-    const currency = r['Währung'] || r['Currency'] || 'EUR';
+    const currency = r['Währung'] || r['Waehrung'] || r['Currency'] || 'EUR';
     const name = r['Auftraggeber/Empfänger'] || r['Payee'] || r['Name'] || r['Name Zahlungsbeteiligter'];
     const purpose = r['Verwendungszweck'] || r['Buchungstext'] || r['Description'] || r['Reference'];
     return {
-      booking_date: normalizeAnyDate(String(booking)) || String(booking || ''),
-      value_date: value ? normalizeAnyDate(String(value)) : undefined,
-      amount: normalizeGermanNumber(String(amountRaw ?? '0')),
+      bookingDate: normalizeAnyDate(String(booking)) || String(booking || ''),
+      valueDate: value ? normalizeAnyDate(String(value)) : undefined,
+      amountCents: Math.round(normalizeGermanNumber(String(amountRaw ?? '0')) * 100),
       currency,
       purpose,
-      counterpart_name: name,
+      counterpartName: name,
     };
-  }).filter(c => c.booking_date && !Number.isNaN(c.amount));
-  return { adapterId, canonical };
+  }).filter(c => c.bookingDate && Number.isFinite(c.amountCents));
+  return { adapterId, rows: mapped };
 }
 
-function camtToCanonical(xml: string): { adapterId: string; canonical: any[] } {
+function camtToRows(xml: string): { adapterId: string; rows: any[] } {
   const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
   const obj = parser.parse(xml);
   const doc = obj?.Document?.BkToCstmrStmt ?? obj?.Document?.BkToCstmrAcctRpt;
   const stmts = Array.isArray(doc?.Stmt) ? doc.Stmt : doc?.Stmt ? [doc.Stmt] : [];
-  const canonical: any[] = [];
+  const rowsOut: any[] = [];
   for (const stmt of stmts) {
     const ntries = Array.isArray(stmt.Ntry) ? stmt.Ntry : stmt.Ntry ? [stmt.Ntry] : [];
     for (const n of ntries) {
@@ -84,16 +96,27 @@ function camtToCanonical(xml: string): { adapterId: string; canonical: any[] } {
       const ccy = typeof amtNode === 'object' ? (amtNode.ccy || amtNode.Ccy) : undefined;
       const purpose = n?.NtryDtls?.TxDtls?.RmtInf?.Ustrd;
       const booking = normalizeAnyDate(String(bkDate));
-      if (booking && !Number.isNaN(amt)) canonical.push({ booking_date: booking, amount: amt, currency: ccy, purpose });
+      if (booking && !Number.isNaN(amt)) rowsOut.push({ bookingDate: booking, amountCents: Math.round(amt * 100), currency: ccy, purpose });
     }
   }
-  return { adapterId: 'camt.053', canonical };
+  return { adapterId: 'camt.053', rows: rowsOut };
 }
 
-export async function parseBufferAuto(buf: Buffer, _opts: { accountId: string }): Promise<{ adapterId: string; canonical: any[] }> {
+export async function parseBufferAuto(buf: Buffer, _opts: { accountId: string }): Promise<{ adapterId: string; rows: any[] }> {
   const text = toUtf8(buf);
-  if (/^<\?xml/i.test(text)) return camtToCanonical(text);
-  return csvToCanonical(text);
+  if (/^<\?xml/i.test(text)) return camtToRows(text);
+  // Comdirect special handling (preamble + custom header names)
+  try {
+    if (detectComdirectGiro(Buffer.from(text, 'utf8'))) {
+      const rows = parseComdirectGiro(Buffer.from(text, 'utf8'));
+      return { adapterId: idComdirectGiro, rows };
+    }
+    if (detectComdirectCsv(Buffer.from(text, 'utf8'))) {
+      const rows = parseComdirectCsv(Buffer.from(text, 'utf8'));
+      return { adapterId: idComdirect, rows };
+    }
+  } catch {}
+  return csvToRows(text);
 }
 
 

@@ -14,6 +14,8 @@ describe('money', () => {
   });
   it('parses negatives', () => {
     expect(parseEuroToCents('-31,24')).toBe(-3124);
+    expect(parseEuroToCents('31,24-')).toBe(-3124);
+    expect(parseEuroToCents('(31,24)')).toBe(-3124);
   });
 });
 

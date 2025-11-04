@@ -5,6 +5,7 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     include: ['tests/**/*.spec.ts'],
+    threads: false,
   },
 });
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { PieChart, BarChart } from '../lib/chart'
 import { apiSummary, apiDev } from '../lib/api'
+import TrophiesPanel from '../components/TrophiesPanel'
 
 type Tx = { id?: string; bookingDate?: string; purpose?: string; amountCents?: number; currency?: string }
 
@@ -22,7 +23,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false
-    ;(async () => {
+    const reloadAll = async () => {
       try {
         const [txsResp, balResp, monsResp, health] = await Promise.all([
           fetch('/api/transactions?limit=10').then(r => r.json()).catch(() => ({ data: [] })),
@@ -43,7 +44,13 @@ export default function Dashboard() {
         } catch {}
         try {
           const catsResp = await apiSummary.categories()
-          setCatEntries((catsResp?.items ?? []).map(i => ({ category: i.category, sumCents: i.spendCents })))
+          const items = (catsResp?.items ?? []).filter(i => typeof i.spendCents === 'number').sort((a, b) => (b.spendCents ?? 0) - (a.spendCents ?? 0))
+          const top = items.slice(0, 6)
+          const rest = items.slice(6)
+          const restSum = rest.reduce((acc, item) => acc + (item.spendCents ?? 0), 0)
+          const merged = [...top]
+          if (restSum > 0) merged.push({ category: 'Other', spendCents: restSum })
+          setCatEntries(merged.map(i => ({ category: i.category, sumCents: i.spendCents ?? 0 })))
         } catch {}
         setError(null)
       } catch {
@@ -51,16 +58,20 @@ export default function Dashboard() {
       } finally {
         if (!cancelled) setLoading(false)
       }
-    })()
-    return () => { cancelled = true }
+    }
+    reloadAll()
+    const onUpdate = () => { setLoading(true); reloadAll() }
+    window.addEventListener('nimbus:data-updated', onUpdate)
+    return () => { cancelled = true; window.removeEventListener('nimbus:data-updated', onUpdate) }
   }, [])
 
   const money = (n: number) => (n/100).toLocaleString('de-DE', { style:'currency', currency: 'EUR' })
-  const pieData = useMemo(() => (catEntries || []).filter(e => (e.category || 'other') !== 'income').map(e => ({ label: e.category || 'other', value: Math.max(0, e.sumCents) })), [catEntries])
+  const pieData = useMemo(() => (catEntries || [])
+    .filter(e => (e.category || 'Other') !== 'Income')
+    .map(e => ({ label: e.category || 'Other', value: Math.max(0, e.sumCents) })), [catEntries])
   const barData = useMemo(() => (monthly || []).map(m => ({ label: m.label, value: Math.abs(m.expenseCents) })), [monthly])
 
   if (loading) return <div>Laden…</div>
-  if (error) return <div>{error}</div>
   return (
     <div>
       <h1 style={{ display:'flex', alignItems:'center', gap: 8 }}>
@@ -69,10 +80,15 @@ export default function Dashboard() {
           API: {apiOk ? 'ok' : 'offline'}
         </span>
       </h1>
+      {error && <div style={{ fontSize: 12, color:'#b91c1c', marginTop: 6 }}>Fehler beim Laden der Übersicht.</div>}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginTop: 12 }}>
         <Kpi title="Saldo gesamt" value={money(balance)} />
         <Kpi title={`Einnahmen (${baseMonth ?? 'Monat'})`} value={money(incomeMTD)} />
         <Kpi title={`Ausgaben (${baseMonth ?? 'Monat'})`} value={money(expenseMTD)} />
+      </div>
+
+      <div style={{ marginTop: 12 }}>
+        <TrophiesPanel />
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap: 16, marginTop: 16 }}>

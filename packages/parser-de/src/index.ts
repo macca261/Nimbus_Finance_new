@@ -1,6 +1,8 @@
 import { parse as parseCsv } from 'csv-parse/sync';
 import iconv from 'iconv-lite';
-import { CsvRow, CanonicalRow, ParseCtx, normalizeWs, parseDeDate, parseEuroToCents } from './utils.js';
+import { CsvRow, CanonicalRow, ParseCtx, normalizeWs, parseDeDate, parseEuroToCents, detectEncoding } from './utils.js';
+import * as comdirect from './adapters/comdirect.js';
+import * as comdirectGiro from './adapters/comdirect-giro.js';
 import { id as idCommerz, matches as mCommerz, parse as pCommerz } from './adapters/commerzbank_csv.js';
 import { id as idSpark, matches as mSpark, parse as pSpark } from './adapters/sparkasse_csv.js';
 import * as ing from './adapters/ing_csv.js';
@@ -36,17 +38,7 @@ export function listAdapters() {
   return ADAPTERS.slice();
 }
 
-function detectEncoding(buf: Buffer): 'utf8' | 'latin1' | 'cp1252' {
-  // Heuristic: try UTF-8 decode; if it fails to re-encode losslessly, fallback to cp1252, otherwise latin1
-  try {
-    const utf8 = buf.toString('utf8');
-    const roundTrip = Buffer.from(utf8, 'utf8').toString('utf8');
-    if (roundTrip.length >= utf8.length) return 'utf8';
-  } catch {}
-  const decoded1252 = iconv.decode(buf, 'win1252');
-  const hasGermanChars = /[äöüÄÖÜß€]/.test(decoded1252);
-  return hasGermanChars ? 'cp1252' : 'latin1';
-}
+// detectEncoding is imported from utils
 
 function detectDelimiter(text: string): string {
   const first = text.split(/\r?\n/)[0] || '';
@@ -112,6 +104,14 @@ function tryN26EN(headers: string[], rows: string[][]) {
 }
 
 export function parseBufferAuto(buf: Buffer, opts: ParseOptions = {}): ParseResult {
+  // Prefer specialized Comdirect Giro detector that can handle preambles
+  try {
+    if (comdirectGiro.detect(buf)) {
+      const out = comdirectGiro.parse(buf) as any;
+      const headers = Array.isArray(out?._debug?.columns) ? out._debug.columns : [];
+      return { adapterId: out.adapterId, rows: out.rows, headers, sample: [], _debug: out._debug } as any;
+    }
+  } catch {}
   const enc = detectEncoding(buf);
   const text = iconv.decode(buf, enc === 'cp1252' ? 'win1252' : enc);
   const delim = opts.delimiter || detectDelimiter(text);
@@ -132,10 +132,13 @@ export function parseBufferAuto(buf: Buffer, opts: ParseOptions = {}): ParseResu
 
   // Specialized German bank adapters first
   const banks: Array<{ id: string; matches: (headers: string[]) => boolean; parse: (rows: CsvRow[], ctx: ParseCtx) => CanonicalRow[] }>= [
-    { id: dkb.id, matches: dkb.matches, parse: dkb.parse },
-    { id: ing.id, matches: ing.matches, parse: ing.parse },
+    // Prefer more specific adapters first
     { id: idCommerz, matches: mCommerz, parse: pCommerz },
     { id: idSpark, matches: mSpark, parse: pSpark },
+    { id: dkb.id, matches: dkb.matches, parse: dkb.parse },
+    { id: ing.id, matches: ing.matches, parse: ing.parse },
+    // Generic-ish Comdirect CSV last
+    { id: comdirect.id, matches: comdirect.matches, parse: comdirect.parse },
   ];
   const trimmedHeaders = headers.map(h => String(h).trim().replace(/^\uFEFF/, ''));
   for (const a of banks) {
@@ -154,7 +157,9 @@ export function parseBufferAuto(buf: Buffer, opts: ParseOptions = {}): ParseResu
       return { adapterId: a.adapterId, rows: a.rows, headers, sample };
     }
   }
-  return { needsMapping: true, headers, sample };
+  const err = new Error(`No parsable rows. Detected encoding=${enc}, delimiter='${delim}'. Headers=[${headers.join(', ')}]`);
+  (err as any).code = 'NO_ROWS';
+  throw err;
 }
 
 
