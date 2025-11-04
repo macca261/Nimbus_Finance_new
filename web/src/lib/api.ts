@@ -65,12 +65,18 @@ export const apiSummary = {
   months6: () => getJSON<{ baseMonth: string|null; series:{label:string; incomeCents:number; expenseCents:number}[] }>(`/summary/monthly-6`),
 };
 
-export async function getTransactions(params: { limit?: number } = {}) {
-  const q = new URLSearchParams(); if (params.limit) q.set('limit', String(params.limit));
-  const r = await fetch(`/api/transactions?${q.toString()}`);
-  const j = await r.json().catch(() => ({ data: [] }));
-  return (j?.data ?? []) as import('@/types/tx').Tx[];
+// Dashboard-specific fetch wrappers - thin fetch helpers
+async function apiFetch(path: string) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
 }
+
+export const getBalance = () => apiFetch('/api/summary/balance');
+export const getMonthly = () => apiFetch('/api/summary/monthly');
+export const getCategories = () => apiFetch('/api/summary/categories');
+export const getTransactions = (limit = 10) => apiFetch(`/api/transactions?limit=${limit}`);
+export const getAchievements = () => apiFetch('/api/achievements');
 
 export const apiDev = {
   reset: () => fetch(`${base}/dev/reset`, { method:'POST' }).then(r => r.json()),
@@ -85,8 +91,3 @@ export type Achievement = {
   target?: number;
   current?: number;
 };
-
-export async function getAchievements(month?: string): Promise<{ data: Achievement[]; month?: string }> {
-  const q = month ? `?month=${encodeURIComponent(month)}` : '';
-  return getJSON<{ data: Achievement[]; month?: string }>(`/achievements${q}`).catch(() => ({ data: [] as Achievement[] }));
-}

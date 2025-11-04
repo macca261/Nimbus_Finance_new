@@ -16,7 +16,7 @@
     "smoke": "ts-node scripts/dev/smoke.ts"
   },
   "dependencies": {
-    "@nimbus/parser-de": "file:../parser-de",
+    "@nimbus/parsers-de": "file:../packages/parsers-de",
     "better-sqlite3": "^9.4.0",
     "cors": "~2.8.5",
     "dotenv": "~16.4.5",

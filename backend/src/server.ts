@@ -8,6 +8,7 @@ import { evaluateAll } from './services/achievements';
 import summaryRouter from './routes/summary';
 import { inferCategory } from './categorize';
 import achievementsRouter from './routes/achievements';
+import { importRouter } from './routes/import';
 import os from 'node:os';
 import fs from 'node:fs';
 import { decodeCsvBuffer } from './lib/text';
@@ -154,6 +155,7 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
 // Summary router
   app.use('/api/summary', summaryRouter);
   app.use('/api/achievements', achievementsRouter);
+  app.use('/api/import', importRouter);
   console.log('Mounted: /api/summary/*');
   console.log('Mounted: /api/achievements');
 

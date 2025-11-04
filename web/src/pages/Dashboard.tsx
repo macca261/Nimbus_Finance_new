@@ -1,43 +1,67 @@
 import { useEffect, useState } from 'react';
-import { Card, CardBody, Stat } from '../components/ui/Card';
-import { Donut } from '../components/charts/Donut';
-import { MonthBars } from '../components/charts/MonthBars';
+import { getBalance, getMonthly, getCategories, getTransactions } from '../lib/api';
+import { formatEuro } from '../lib/format';
+import KpiCard from '../components/dashboard/KpiCard';
+import Section from '../components/dashboard/Section';
+import TransactionsTable from '../components/dashboard/TransactionsTable';
+import UploadCta from '../components/dashboard/UploadCta';
+import MonthlyAreaChart from '../components/dashboard/MonthlyAreaChart';
 
-type BalanceResp = { data: { balanceCents: number; currency: string } };
-type MonthlyResp = { data: { month: string; incomeCents: number; expenseCents: number }[] };
-type CategoriesResp = { data: { category: string; amountCents: number }[] };
-type Tx = { id: number; bookingDate: string; purpose: string; amountCents: number; currency: string };
+type MonthlyData = { month: string; incomeCents: number; expenseCents: number };
+type CategoryData = { category: string; amountCents: number };
+type TransactionRow = { id?: string | number; bookingDate: string; purpose: string; amountCents: number; category?: string };
 
 export default function Dashboard() {
-  const [balance, setBalance] = useState<BalanceResp['data']>({ balanceCents: 0, currency: 'EUR' });
-  const [monthly, setMonthly] = useState<MonthlyResp['data']>([]);
-  const [cats, setCats] = useState<CategoriesResp['data']>([]);
-  const [recent, setRecent] = useState<Tx[]>([]);
+  const [balance, setBalance] = useState<{ balanceCents: number; currency: string } | null>(null);
+  const [monthly, setMonthly] = useState<MonthlyData[]>([]);
+  const [categories, setCategories] = useState<CategoryData[]>([]);
+  const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<string>('Gerade eben');
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
+
+    const loadData = async () => {
       try {
-        const [balanceRes, monthlyRes, catsRes, recentRes] = await Promise.all([
-          fetch('/api/summary/balance').then(r => r.json()).catch(() => ({ data: { balanceCents: 0, currency: 'EUR' } })),
-          fetch('/api/summary/monthly?months=6').then(r => r.json()).catch(() => ({ data: [] })),
-          fetch('/api/summary/categories').then(r => r.json()).catch(() => ({ data: [] })),
-          fetch('/api/transactions?limit=8').then(r => r.json()).catch(() => ({ data: [] })),
+        setLoading(true);
+        setError(null);
+
+        const [balanceRes, monthlyRes, categoriesRes, transactionsRes] = await Promise.all([
+          getBalance().catch(() => ({ data: { balanceCents: 0, currency: 'EUR' } })),
+          getMonthly().catch(() => ({ data: [] })),
+          getCategories().catch(() => ({ data: [] })),
+          getTransactions(10).catch(() => ({ data: [] })),
         ]);
+
         if (cancelled) return;
-        setBalance((balanceRes as BalanceResp).data);
-        setMonthly((monthlyRes as MonthlyResp).data);
-        setCats((catsRes as CategoriesResp).data);
-        setRecent((recentRes as { data: Tx[] }).data || []);
+
+        // Normalize to safe shapes
+        setBalance(balanceRes?.data || null);
+        setMonthly(Array.isArray(monthlyRes?.data) ? monthlyRes.data : []);
+        setCategories(Array.isArray(categoriesRes?.data) ? categoriesRes.data : []);
+        setTransactions(Array.isArray(transactionsRes?.data) ? transactionsRes.data.map((tx: any) => ({
+          id: tx.id,
+          bookingDate: tx.bookingDate || '',
+          purpose: tx.purpose || '',
+          amountCents: tx.amountCents || 0,
+          category: tx.category || undefined,
+        })) : []);
+        setLastUpdate(new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }));
       } catch (err) {
-        console.error('[dashboard] load error:', err);
+        if (!cancelled) {
+          setError('Daten konnten nicht geladen werden.');
+          console.error('[dashboard] load error:', err);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
-    load();
-    const onUpdate = () => load();
+
+    loadData();
+
+    const onUpdate = () => loadData();
     window.addEventListener('nimbus:data-updated', onUpdate);
     return () => {
       cancelled = true;
@@ -45,103 +69,118 @@ export default function Dashboard() {
     };
   }, []);
 
-  const fmt = (cents: number) => `${(cents / 100).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €`;
+  // Calculate KPIs
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonthData = monthly.find(m => m.month === currentMonth) || { incomeCents: 0, expenseCents: 0 };
+  const totalIncome = currentMonthData.incomeCents;
+  const totalExpenses = Math.abs(currentMonthData.expenseCents);
 
-  const donutData = cats
-    .filter(c => c.category && c.category !== 'Income')
-    .map(c => ({ name: c.category || 'Other', value: Math.abs(c.amountCents) }))
-    .filter(d => d.value > 0);
+  // Top categories (expenses only, sorted by absolute amount)
+  const topCategories = categories
+    .filter(c => c.amountCents < 0 && c.category && c.category !== 'Income')
+    .map(c => ({ ...c, amountCents: Math.abs(c.amountCents) }))
+    .sort((a, b) => b.amountCents - a.amountCents)
+    .slice(0, 5);
 
-  const income6M = monthly.reduce((a, b) => a + (b.incomeCents || 0), 0);
-  const expense6M = monthly.reduce((a, b) => a + (b.expenseCents || 0), 0);
+  const maxCategoryAmount = Math.max(...topCategories.map(c => c.amountCents), 1);
 
-  if (loading) {
+  if (error && !loading) {
     return (
-      <div className="mx-auto max-w-7xl p-4 md:p-8 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[1, 2, 3].map(i => (
-            <Card key={i}>
-              <CardBody>
-                <div className="animate-pulse space-y-2">
-                  <div className="h-4 w-24 bg-slate-200 rounded"></div>
-                  <div className="h-8 w-32 bg-slate-200 rounded"></div>
-                </div>
-              </CardBody>
-            </Card>
-          ))}
+      <div className="max-w-7xl mx-auto px-4 md:px-6 py-6">
+        <div className="rounded-2xl border border-white/10 bg-white/5 dark:bg-zinc-900/40 dark:border-zinc-800/50 shadow-sm p-6 text-center">
+          <p className="text-slate-900 dark:text-slate-100 mb-4">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors"
+          >
+            Erneut versuchen
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-7xl p-4 md:p-8 space-y-6">
-      {/* KPI Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardBody>
-            <Stat label="Saldo gesamt" value={fmt(balance.balanceCents)} />
-          </CardBody>
-        </Card>
-        <Card>
-          <CardBody>
-            <Stat label="Einnahmen (6M)" value={fmt(income6M)} />
-          </CardBody>
-        </Card>
-        <Card>
-          <CardBody>
-            <Stat label="Ausgaben (6M)" value={fmt(expense6M)} />
-          </CardBody>
-        </Card>
+    <div className="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl md:text-3xl font-semibold text-slate-900 dark:text-slate-100 leading-tight">
+            Übersicht
+          </h1>
+          <p className="text-slate-600 dark:text-slate-400 mt-1">Dein finanzieller Überblick</p>
+        </div>
+        <UploadCta />
       </div>
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardBody>
-            <div className="mb-3 text-slate-700 font-medium">Monatsüberblick (6M)</div>
-            {monthly.length === 0 ? (
-              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">Keine Daten verfügbar.</div>
-            ) : (
-              <MonthBars data={monthly} />
-            )}
-          </CardBody>
-        </Card>
-        <Card>
-          <CardBody>
-            <div className="mb-3 text-slate-700 font-medium">Ausgaben nach Kategorien</div>
-            {donutData.length === 0 ? (
-              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">Keine Daten verfügbar.</div>
-            ) : (
-              <Donut data={donutData} />
-            )}
-          </CardBody>
-        </Card>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
+        <KpiCard
+          label="Saldo"
+          value={balance ? formatEuro(balance.balanceCents) : '—'}
+          loading={loading}
+        />
+        <KpiCard
+          label="Einnahmen"
+          value={formatEuro(totalIncome)}
+          hint="Dieser Monat"
+          loading={loading}
+        />
+        <KpiCard
+          label="Ausgaben"
+          value={totalExpenses > 0 ? `– ${formatEuro(totalExpenses)}` : formatEuro(0)}
+          hint="Dieser Monat"
+          loading={loading}
+        />
+        <KpiCard
+          label="Letzte Aktualisierung"
+          value={lastUpdate}
+          loading={loading}
+        />
       </div>
 
-      {/* Recent */}
-      <Card>
-        <CardBody>
-          <div className="mb-4 text-slate-700 font-medium">Letzte Buchungen</div>
-          <ul className="divide-y divide-slate-100">
-            {recent.length === 0 ? (
-              <li className="py-6 text-slate-400">Keine Daten. — lade eine CSV hoch!</li>
-            ) : (
-              recent.map(tx => (
-                <li key={tx.id} className="py-3 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <div className="text-slate-900">{tx.purpose || '—'}</div>
-                    <div className="text-sm text-slate-500">{tx.bookingDate ? new Date(tx.bookingDate).toLocaleDateString('de-DE') : '—'}</div>
+      {/* Charts Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Monthly Area Chart */}
+        <Section title="Monatsverlauf" subtitle="Einnahmen vs. Ausgaben" loading={loading}>
+          <MonthlyAreaChart series={monthly} />
+        </Section>
+
+        {/* Top Categories */}
+        <Section title="Top-Kategorien" subtitle="Ausgaben nach Kategorie" loading={loading}>
+          {topCategories.length === 0 ? (
+            <div className="text-center py-8 text-slate-500 dark:text-slate-400">
+              <p>Keine Kategoriedaten verfügbar</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {topCategories.map((cat, i) => (
+                <div key={cat.category || i}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {cat.category}
+                    </span>
+                    <span className="text-sm font-medium text-slate-900 dark:text-slate-100 tabular-nums">
+                      {formatEuro(cat.amountCents)}
+                    </span>
                   </div>
-                  <div className={`font-medium tabular-nums ${(tx.amountCents ?? 0) < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                    {fmt(tx.amountCents ?? 0)}
+                  <div className="w-full h-2 bg-slate-200 dark:bg-zinc-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-600 dark:bg-blue-500 rounded-full transition-all"
+                      style={{ width: `${(cat.amountCents / maxCategoryAmount) * 100}%` }}
+                    />
                   </div>
-                </li>
-              ))
-            )}
-          </ul>
-        </CardBody>
-      </Card>
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+      </div>
+
+      {/* Transactions Table */}
+      <Section title="Letzte Buchungen" subtitle="Die letzten 10 Transaktionen" loading={loading}>
+        <TransactionsTable rows={transactions} loading={loading} />
+      </Section>
     </div>
   );
 }

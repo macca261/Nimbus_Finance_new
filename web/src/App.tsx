@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, Link } from 'react-router-dom'
-import Dashboard from './pages/Dashboard'
+import { Routes, Route } from 'react-router-dom'
+import Overview from './pages/Overview'
 import UploadCSV from './pages/UploadCSV'
+import Import from './pages/Import'
 import TransactionsPage from './pages/Transactions'
 import { ToastContainer } from './lib/toast'
 
@@ -35,9 +36,17 @@ export default function App() {
           count = typeof sJson?.data?.count === 'number' ? sJson.data.count : null
         }
 
-        if (!cancelled) setStatus({ health, count })
+        if (!cancelled) {
+          setStatus({ health, count })
+          const statusEl = document.getElementById('api-status')
+          if (statusEl) statusEl.textContent = health
+        }
       } catch {
-        if (!cancelled) setStatus(prev => ({ ...prev, health: 'offline' }))
+        if (!cancelled) {
+          setStatus(prev => ({ ...prev, health: 'offline' }))
+          const statusEl = document.getElementById('api-status')
+          if (statusEl) statusEl.textContent = 'offline'
+        }
       }
     }
 
@@ -52,29 +61,17 @@ export default function App() {
     }
   }, [])
 
-  const statusLabel = status.count != null
-    ? `API: ${status.health} • TX: ${status.count}`
-    : `API: ${status.health}`
-
   return (
-    <div style={{fontFamily:'Inter, system-ui, Arial', padding:16}}>
-      <header style={{display:'flex', gap:16, alignItems:'center', marginBottom:16}}>
-        <h1 style={{margin:0}}>Nimbus Finance</h1>
-        <nav style={{display:'flex', gap:12}}>
-          <Link to="/">Übersicht</Link>
-          <Link to="/transactions">Transaktionen</Link>
-          <Link to="/upload">CSV hochladen</Link>
-        </nav>
-        <span style={{marginLeft:'auto', fontSize:12, opacity:0.7}}>{statusLabel}</span>
-      </header>
+    <>
       <Routes>
-        <Route path="/" element={<Dashboard/>} />
+        <Route path="/" element={<Overview/>} />
         <Route path="/upload" element={<UploadCSV/>} />
+        <Route path="/import" element={<Import/>} />
         <Route path="/transactions" element={<TransactionsPage/>} />
         <Route path="*" element={<div>Not found</div>} />
       </Routes>
       <ToastContainer />
-    </div>
+    </>
   )
 }
 
