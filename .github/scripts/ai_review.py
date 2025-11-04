@@ -24,13 +24,13 @@ Diff:
 """
 
 resp = client.chat.completions.create(
-  model="gpt-4o-mini",
-  messages=[{"role":"user","content":prompt}],
-  temperature=0.2,
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": prompt}],
+    temperature=0.2,
 )
 
 body = resp.choices[0].message.content
 
 # Post as a single PR comment
-subprocess.check_call(["gh","pr","comment",pr,"--repo",repo,"--body",body])
+subprocess.check_call(["gh", "pr", "comment", pr, "--repo", repo, "--body", body])
 
