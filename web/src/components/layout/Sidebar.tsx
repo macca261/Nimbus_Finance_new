@@ -1,40 +1,37 @@
-import { Link, useLocation } from 'react-router-dom';
-import { colors } from '../../styles/design-system';
+import React from "react";
+import { NavLink } from "react-router-dom";
 
 const nav = [
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/upload', label: 'Upload CSV' },
-  { to: '/categories', label: 'Categories' },
-  { to: '/connections', label: 'Connections' },
-  { to: '/reports', label: 'Reports' },
+  { to: "/", label: "Übersicht", icon: "🏠" },
+  { to: "/transactions", label: "Transaktionen", icon: "📄" },
+  { to: "/upload", label: "CSV hochladen", icon: "⬆️" },
+  { to: "/import", label: "Bank Import (DE)", icon: "🏦" },
+  { to: "/goals", label: "Ziele", icon: "🎯" },
+  { to: "/categories", label: "Kategorien", icon: "📊" },
+  { to: "/settings", label: "Einstellungen", icon: "⚙️" },
 ];
 
-export default function Sidebar() {
-  const { pathname } = useLocation();
+export function Sidebar() {
   return (
-    <aside aria-label="Primary" style={{ background: colors.gray[50] }} className="hidden md:block w-64 min-h-screen border-r">
-      <div className="px-4 py-5">
-        <div className="text-xl font-semibold" style={{ color: colors.trustBlue[700] }}>Nimbus Finance</div>
-      </div>
-      <nav className="px-2">
-        <ul className="space-y-1">
-          {nav.map(item => {
-            const active = pathname.startsWith(item.to);
-            return (
-              <li key={item.to}>
-                <Link
-                  to={item.to}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-md ${active ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-700 hover:bg-white'}`}
-                >
-                  <span className="text-sm">{item.label}</span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
+    <aside className="hidden md:flex md:flex-col w-64 border-r border-zinc-200/70 dark:border-zinc-800/80 bg-white/70 dark:bg-zinc-900/40 backdrop-blur supports-[backdrop-filter]:bg-white/40 sticky top-0 h-screen">
+      <div className="px-4 py-4 text-xl font-bold">Nimbus Finance</div>
+      <nav className="px-2 pb-4 space-y-1 overflow-auto">
+        {nav.map(n => (
+          <NavLink
+            key={n.to}
+            to={n.to}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition
+               ${isActive ? "bg-indigo-600 text-white" : "hover:bg-zinc-100 dark:hover:bg-zinc-800"}`
+            }
+          >
+            <span>{n.icon}</span> <span>{n.label}</span>
+          </NavLink>
+        ))}
       </nav>
+      <div className="mt-auto p-3 text-xs text-zinc-500">
+        API:&nbsp;<span id="api-status">ok</span>
+      </div>
     </aside>
   );
 }
-
-

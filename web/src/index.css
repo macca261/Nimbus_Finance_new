@@ -14,6 +14,7 @@ body {
   font-variant-numeric: tabular-nums;
   background-color: #f8fafc;
   color: #0f172a;
+  overflow-x: hidden;
 }
 a { color: #5B6BFF; text-decoration: none; }
 a:hover { text-decoration: underline; }
