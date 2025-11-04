@@ -1,78 +1,26 @@
-import { useEffect, useState } from 'react'
-import { Routes, Route } from 'react-router-dom'
-import Overview from './pages/Overview'
-import UploadCSV from './pages/UploadCSV'
-import Import from './pages/Import'
-import TransactionsPage from './pages/Transactions'
-import { ToastContainer } from './lib/toast'
-
-type StatusState = {
-  health: string
-  count: number | null
-}
+import { Routes, Route, Navigate } from "react-router-dom";
+import AppShell from "./components/AppShell/AppShell";
+import Dashboard from "./pages/Dashboard";
+import Import from "./pages/Import";
+import { ToastContainer } from "./lib/toast";
 
 export default function App() {
-  const [status, setStatus] = useState<StatusState>({ health: 'checking...', count: null })
-
-  useEffect(() => {
-    let cancelled = false
-
-    const fetchStatus = async () => {
-      try {
-        const [healthRes, statsRes] = await Promise.all([
-          fetch('/api/health'),
-          fetch('/api/debug/stats'),
-        ])
-
-        let health = 'offline'
-        if (healthRes.ok) {
-          const hJson = await healthRes.json().catch(() => null)
-          health = hJson?.ok ? 'ok' : 'offline'
-        }
-
-        let count: number | null = null
-        if (statsRes.ok) {
-          const sJson = await statsRes.json().catch(() => null)
-          count = typeof sJson?.data?.count === 'number' ? sJson.data.count : null
-        }
-
-        if (!cancelled) {
-          setStatus({ health, count })
-          const statusEl = document.getElementById('api-status')
-          if (statusEl) statusEl.textContent = health
-        }
-      } catch {
-        if (!cancelled) {
-          setStatus(prev => ({ ...prev, health: 'offline' }))
-          const statusEl = document.getElementById('api-status')
-          if (statusEl) statusEl.textContent = 'offline'
-        }
-      }
-    }
-
-    fetchStatus()
-    let interval: number | undefined
-    if (import.meta.env.DEV) {
-      interval = window.setInterval(fetchStatus, 30000)
-    }
-    return () => {
-      cancelled = true
-      if (interval) window.clearInterval(interval)
-    }
-  }, [])
-
   return (
     <>
-      <Routes>
-        <Route path="/" element={<Overview/>} />
-        <Route path="/upload" element={<UploadCSV/>} />
-        <Route path="/import" element={<Import/>} />
-        <Route path="/transactions" element={<TransactionsPage/>} />
-        <Route path="*" element={<div>Not found</div>} />
-      </Routes>
+      <AppShell>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/overview" element={<Navigate to="/" replace />} />
+          <Route path="/transactions" element={<div style={{padding:24}}>Transactions (todo)</div>} />
+          <Route path="/goals" element={<div style={{padding:24}}>Goals (todo)</div>} />
+          <Route path="/categories" element={<div style={{padding:24}}>Categories (todo)</div>} />
+          <Route path="/import" element={<Import />} />
+          <Route path="/settings" element={<div style={{padding:24}}>Settings (todo)</div>} />
+        </Routes>
+      </AppShell>
       <ToastContainer />
     </>
-  )
+  );
 }
 
 
