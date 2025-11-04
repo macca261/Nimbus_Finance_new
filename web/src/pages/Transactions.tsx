@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Tx } from '@/types/tx';
 
 type TxRow = Tx;
@@ -12,61 +12,116 @@ export default function TransactionsPage() {
   const [items, setItems] = useState<TxRow[]>([]);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState(true);
+  const [resetting, setResetting] = useState(false);
 
-  useEffect(() => {
-    fetch('/api/transactions?limit=100')
-      .then(r => (r.ok ? r.json() : Promise.reject(r.statusText)))
-      .then((j) => setItems((j?.data as Tx[]) ?? []))
-      .catch(() => setError('Fehler beim Laden der Transaktionen.'))
-      .finally(() => setLoading(false));
+  const apiBase = (import.meta.env.VITE_API_URL as string | undefined) || '/api';
+  const cleanBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase;
+  const exportHref = `${cleanBase}/transactions.csv`;
+
+  const fetchTransactions = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const res = await fetch('/api/transactions?limit=200');
+      if (!res.ok) throw new Error('Fehler beim Laden');
+      const json = await res.json().catch(() => ({ data: [] }));
+      setItems((json?.data as TxRow[]) ?? []);
+    } catch {
+      setError('Fehler beim Laden der Transaktionen.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  if (loading) return <div>Laden…</div>;
-  if (error) return <div>{error}</div>;
+  useEffect(() => {
+    fetchTransactions();
+  }, [fetchTransactions]);
+
+  const handleReset = useCallback(async () => {
+    try {
+      setResetting(true);
+      setError('');
+      const res = await fetch(`${cleanBase}/debug/reset`, { method: 'POST' });
+      if (!res.ok) throw new Error('Reset fehlgeschlagen');
+      await fetchTransactions();
+    } catch {
+      setError('Zurücksetzen fehlgeschlagen.');
+    } finally {
+      setResetting(false);
+    }
+  }, [cleanBase, fetchTransactions]);
 
   return (
-    <div style={{ paddingRight: 8 }}>
-      <h2>Transaktionen</h2>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th style={{ textAlign: 'left', padding: '6px 4px' }}>Datum</th>
-            <th style={{ textAlign: 'left', padding: '6px 4px' }}>Text</th>
-            <th style={{ textAlign: 'right', padding: '6px 4px' }}>Betrag</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((t, i) => (
-            <tr key={t.id ?? i}>
-              <td style={{ padding: '6px 4px' }}>{t.bookingDate ?? '—'}</td>
-              <td style={{ padding: '6px 4px' }}>
-                <span title={t.purpose ?? ''}>
-                  {String(t.purpose ?? '—').length > 60
-                    ? String(t.purpose ?? '').slice(0, 60) + '…'
-                    : String(t.purpose ?? '—')}
-                </span>
-              </td>
-              <td
-                style={{
-                  padding: '6px 4px',
-                  textAlign: 'right',
-                  color: (t.amountCents ?? 0) < 0 ? 'crimson' : '#157f1f',
-                  fontWeight: 600,
-                }}
-              >
-                {fmt(t.amountCents, t.currency)}
-              </td>
-            </tr>
-          ))}
-          {items.length === 0 && (
-            <tr>
-              <td colSpan={3} style={{ padding: '10px 4px', opacity: 0.7 }}>
-                Keine Daten. Laden Sie eine CSV hoch.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+    <div className="max-w-5xl mx-auto px-4 md:px-6 lg:px-8 py-8 space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-semibold text-slate-900">Transaktionen</h2>
+          <p className="text-sm text-slate-500">Alle Buchungen der letzten CSV-Uploads.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={exportHref}
+            download="transactions.csv"
+            rel="noreferrer"
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+          >
+            CSV exportieren
+          </a>
+          <button
+            onClick={handleReset}
+            disabled={resetting}
+            className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-700 transition hover:border-amber-300 hover:bg-amber-100 disabled:opacity-60"
+          >
+            {resetting ? 'Setze zurück…' : 'Daten zurücksetzen'}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>}
+
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-sm">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-100">
+            <thead className="bg-slate-50">
+              <tr className="text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-3">Buchungstag</th>
+                <th className="px-4 py-3">Verwendungszweck</th>
+                <th className="px-4 py-3 text-right">Betrag</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-sm">
+              {loading ? (
+                <tr>
+                  <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
+                    Lade Transaktionen…
+                  </td>
+                </tr>
+              ) : items.length === 0 ? (
+                <tr>
+                  <td colSpan={3} className="px-4 py-6 text-center text-slate-500">
+                    Keine Daten. Lade eine CSV hoch.
+                  </td>
+                </tr>
+              ) : (
+                items.map((t, i) => (
+                  <tr key={t.id ?? i} className="hover:bg-slate-50/80">
+                    <td className="px-4 py-3 text-slate-600">{t.bookingDate ?? '—'}</td>
+                    <td className="px-4 py-3 text-slate-800">
+                      <span title={t.purpose ?? ''} className="block max-w-[520px] truncate">
+                        {t.purpose ?? '—'}
+                      </span>
+                      {t.counterpartName && <span className="text-xs text-slate-500">{t.counterpartName}</span>}
+                    </td>
+                    <td className={`px-4 py-3 text-right font-semibold tabular-nums ${ (t.amountCents ?? 0) < 0 ? 'text-rose-600' : 'text-emerald-600' }`}>
+                      {fmt(t.amountCents, t.currency)}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

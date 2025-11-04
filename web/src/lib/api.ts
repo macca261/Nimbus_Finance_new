@@ -48,10 +48,19 @@ export async function getJSON<T>(path: string): Promise<T> {
 }
 
 export const apiSummary = {
-  balance: () => getJSON<{ data: { balanceCents:number; currency:string } }>(`/summary/balance`).then(j => j.data),
+  balance: (month?: string) => {
+    const q = month ? `?month=${encodeURIComponent(month)}` : '';
+    return getJSON<{ data: { balanceCents: number; currency: string; month?: string; monthNetCents?: number } }>(`/summary/balance${q}`).then(j => j.data);
+  },
   month:   (month?: string) => getJSON<{ month: string|null; incomeCents:number; expenseCents:number }>(`/summary/month${month ? `?month=${encodeURIComponent(month)}` : ''}`),
-  cats:    () => getJSON<{ data:{category:string; amountCents:number}[] }>(`/summary/categories`).then(j => ({ items: j.data.map(i => ({ category: i.category, spendCents: i.amountCents })) })),
-  categories: () => getJSON<{ data:{category:string; amountCents:number}[] }>(`/summary/categories`).then(j => ({ items: j.data.map(i => ({ category: i.category, spendCents: i.amountCents })) })),
+  cats:    (month?: string) => {
+    const q = month ? `?month=${encodeURIComponent(month)}` : '';
+    return getJSON<{ data:{category:string; amountCents:number}[] }>(`/summary/categories${q}`).then(j => ({ items: j.data.map(i => ({ category: i.category, spendCents: i.amountCents })) }));
+  },
+  categories: (month?: string) => {
+    const q = month ? `?month=${encodeURIComponent(month)}` : '';
+    return getJSON<{ data:{category:string; amountCents:number}[] }>(`/summary/categories${q}`).then(j => ({ items: j.data.map(i => ({ category: i.category, spendCents: i.amountCents })) }));
+  },
   months:  (months = 6) => getJSON<{ data:{month:string; incomeCents:number; expenseCents:number}[] }>(`/summary/monthly?months=${months}`).then(j => j.data),
   months6: () => getJSON<{ baseMonth: string|null; series:{label:string; incomeCents:number; expenseCents:number}[] }>(`/summary/monthly-6`),
 };
@@ -67,16 +76,17 @@ export const apiDev = {
   reset: () => fetch(`${base}/dev/reset`, { method:'POST' }).then(r => r.json()),
 };
 
-export type AchievementDto = {
-  code: string;
+export type Achievement = {
+  id: 'no-fees' | 'saver-500' | 'groceries-under-200' | 'streak-7';
   title: string;
   description: string;
-  tier: 'bronze'|'silver'|'gold';
-  unlocked: boolean;
-  unlockedAt?: string;
+  achieved: boolean;
   progress: number;
-}
+  target?: number;
+  current?: number;
+};
 
-export async function getAchievements(): Promise<{ data: AchievementDto[] }> {
-  return getJSON<{ data: AchievementDto[] }>(`/achievements`).catch(() => ({ data: [] as AchievementDto[] } as any));
+export async function getAchievements(month?: string): Promise<{ data: Achievement[]; month?: string }> {
+  const q = month ? `?month=${encodeURIComponent(month)}` : '';
+  return getJSON<{ data: Achievement[]; month?: string }>(`/achievements${q}`).catch(() => ({ data: [] as Achievement[] }));
 }

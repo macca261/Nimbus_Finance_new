@@ -8,6 +8,7 @@ export type Tx = {
   counterpartName?: string;
   accountIban?: string;
   category?: string;
+  rawCode?: string;
 };
 
 

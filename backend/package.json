@@ -9,6 +9,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "vitest run",
+    "reset": "ts-node scripts/dev/reset.ts",
+    "seed": "ts-node scripts/dev/seed.ts",
     "db:reset": "ts-node scripts/dev/reset.ts",
     "db:seed": "ts-node scripts/dev/seed.ts",
     "smoke": "ts-node scripts/dev/smoke.ts"
@@ -19,6 +21,7 @@
     "cors": "~2.8.5",
     "dotenv": "~16.4.5",
     "express": "~4.18.2",
+    "iconv-lite": "^0.6.3",
     "multer": "~1.4.5-lts.1"
   },
   "devDependencies": {

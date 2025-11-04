@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { startOfMonth, endOfMonth, firstDayMonthsAgo, lastDayMonthsAgo } from '../lib/dates';
+import { startOfMonth, endOfMonth, firstDayMonthsAgo, lastDayMonthsAgo, getMonthRange } from '../lib/dates';
 
 const summary = Router();
 
@@ -13,8 +13,19 @@ function getLatestYm(req: any): string | null {
 summary.get('/balance', (req, res) => {
   try {
     const db = (req.app as any).locals.db;
-    const row = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions`).get() as { sum?: number };
-    res.json({ data: { balanceCents: row?.sum ?? 0, currency: 'EUR' } });
+    const totalRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions`).get() as { sum?: number };
+    const payload: { balanceCents: number; currency: string; month?: string; monthNetCents?: number } = {
+      balanceCents: totalRow?.sum ?? 0,
+      currency: 'EUR',
+    };
+    const qMonth = (req.query as any)?.month as string | undefined;
+    if (qMonth) {
+      const { start, end, month } = getMonthRange(qMonth);
+      const monthRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions WHERE bookingDate BETWEEN ? AND ?`).get(start, end) as { sum?: number };
+      payload.month = month;
+      payload.monthNetCents = monthRow?.sum ?? 0;
+    }
+    res.json({ data: payload });
   } catch (e) {
     res.json({ data: { balanceCents: 0, currency: 'EUR' } });
   }
@@ -23,20 +34,22 @@ summary.get('/balance', (req, res) => {
 // GET /api/summary/month (income/expense for current month)
 summary.get('/month', (req, res) => {
   try {
-    const qMonth = (req.query as any).month as string | undefined || getLatestYm(req);
-    if (!qMonth) return res.json({ month: null, incomeCents: 0, expenseCents: 0 });
+    const rawMonth = (req.query as any).month as string | undefined;
+    const fallback = rawMonth || getLatestYm(req);
+    if (!fallback) return res.json({ month: null, incomeCents: 0, expenseCents: 0 });
+    const { start, end, month } = getMonthRange(fallback);
     const db = (req.app as any).locals.db;
     const inc = db.prepare(`
       SELECT COALESCE(SUM(amountCents),0) AS sum
       FROM transactions
-      WHERE amountCents > 0 AND strftime('%Y-%m', bookingDate) = ?
-    `).get(qMonth) as { sum?: number };
+      WHERE amountCents > 0 AND bookingDate BETWEEN ? AND ?
+    `).get(start, end) as { sum?: number };
     const exp = db.prepare(`
       SELECT COALESCE(SUM(amountCents),0) AS sum
       FROM transactions
-      WHERE amountCents < 0 AND strftime('%Y-%m', bookingDate) = ?
-    `).get(qMonth) as { sum?: number };
-    res.json({ month: qMonth, incomeCents: inc?.sum ?? 0, expenseCents: Math.abs(exp?.sum ?? 0) });
+      WHERE amountCents < 0 AND bookingDate BETWEEN ? AND ?
+    `).get(start, end) as { sum?: number };
+    res.json({ month, incomeCents: inc?.sum ?? 0, expenseCents: Math.abs(exp?.sum ?? 0) });
   } catch {
     res.json({ month: null, incomeCents: 0, expenseCents: 0 });
   }
@@ -46,16 +59,27 @@ summary.get('/month', (req, res) => {
 summary.get('/categories', (req, res) => {
   try {
     const db = (req.app as any).locals.db;
-    const rows = db.prepare(`
+    const monthParam = (req.query as any)?.month as string | undefined;
+    const hasMonth = Boolean(monthParam);
+    const params: unknown[] = [];
+    let whereClause = '';
+    if (hasMonth) {
+      const { start, end } = getMonthRange(monthParam);
+      whereClause = 'WHERE bookingDate BETWEEN ? AND ?';
+      params.push(start, end);
+    }
+    const sql = `
       SELECT
         COALESCE(NULLIF(TRIM(category), ''), 'Other') AS category,
         SUM(CASE WHEN amountCents < 0 THEN amountCents ELSE 0 END) AS spendCents,
         SUM(CASE WHEN amountCents > 0 THEN amountCents ELSE 0 END) AS incomeCents
       FROM transactions
+      ${whereClause}
       GROUP BY category
       ORDER BY ABS(SUM(CASE WHEN amountCents < 0 THEN amountCents ELSE 0 END)) DESC
       LIMIT 50
-    `).all() as { category: string; spendCents: number | null; incomeCents: number | null }[];
+    `;
+    const rows = db.prepare(sql).all(...params) as { category: string; spendCents: number | null; incomeCents: number | null }[];
     const data = (rows ?? []).map(r => {
       const category = r.category || 'Other';
       const spend = Math.abs(r.spendCents ?? 0);

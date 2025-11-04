@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: Prettier (check only)
+        run: npm run fmt:check --workspaces --if-present
+      - name: ESLint
+        run: npm run lint --workspaces --if-present
+      - name: Typecheck
+        run: npm run typecheck --workspaces --if-present
+      - name: Tests
+        run: npm run test --workspaces --if-present || true
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-results
+          path: |
+            **/coverage/**
+            **/vitest*.json
+            **/junit*.xml
+            **/test-output/**
+

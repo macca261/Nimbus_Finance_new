@@ -131,10 +131,19 @@ CREATE TABLE IF NOT EXISTS user_achievements (
   }
 }
 
-const persistentDb = openDb()
-persistentDb.pragma('journal_mode = WAL')
-initDb(persistentDb)
-export const db = persistentDb
+export function prepareDb(conn: Database): void {
+  conn.pragma('journal_mode = WAL');
+  initDb(conn);
+}
+
+let persistentDb = openDb()
+prepareDb(persistentDb)
+export let db: Database = persistentDb
+
+export function replaceDb(newDb: Database): void {
+  persistentDb = newDb
+  db = newDb
+}
 
 export function txFingerprint(r: {
   bookingDate?: string

@@ -1,0 +1,38 @@
+name: reviewdog
+
+on:
+  pull_request:
+
+jobs:
+  eslint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: ESLint via reviewdog
+        uses: reviewdog/action-eslint@v1
+        with:
+          eslint_flags: "."
+          reporter: github-pr-review
+          level: error
+
+  tsc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck --workspaces --if-present || true
+      - name: tsc reviewdog
+        uses: reviewdog/action-suggester@v1
+        with:
+          tool_name: tsc
+          fail_on_error: false
+

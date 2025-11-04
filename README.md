@@ -71,6 +71,10 @@ Scripts
 - `npm run prisma:generate` — generate Prisma client
 - `npm run prisma:migrate` — run a new database migration
 
+API
+---
+- `GET /api/transactions.csv` — export transactions as CSV (supports `limit`, `dateFrom`, `dateTo`)
+
 Tech Stack
 ---------
 - Frontend: React, TypeScript, Tailwind, Vite

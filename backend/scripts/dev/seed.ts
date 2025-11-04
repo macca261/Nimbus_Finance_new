@@ -1,32 +1,19 @@
-import { db } from '../../src/db';
-import crypto from 'node:crypto';
+import { db } from '../../src/db'
+import { insertManyTransactions, type InsertRow } from '../../src/insert'
 
-function fp(d: string, cents: number, p: string) {
-  return crypto.createHash('sha256').update(`${d}|${cents}|${p}`).digest('hex');
-}
+const rows: InsertRow[] = [
+  { bookingDate: '2025-03-01', valueDate: '2025-03-01', amountCents: 300000, currency: 'EUR', purpose: 'GEHALT ACME GMBH', counterpartName: 'ACME GmbH', category: 'Income' },
+  { bookingDate: '2025-03-02', valueDate: '2025-03-02', amountCents: -5000, currency: 'EUR', purpose: 'REWE MARKT 123', category: 'Groceries' },
+  { bookingDate: '2025-03-03', valueDate: '2025-03-03', amountCents: -3000, currency: 'EUR', purpose: 'BVG MONATSKARTE', category: 'Transport' },
+  { bookingDate: '2025-03-04', valueDate: '2025-03-04', amountCents: -5000, currency: 'EUR', purpose: 'LIDL FILIALE 42', category: 'Groceries' },
+  { bookingDate: '2025-03-05', valueDate: '2025-03-05', amountCents: -4000, currency: 'EUR', purpose: 'DB REISEZENTRUM', category: 'Transport' },
+  { bookingDate: '2025-03-06', valueDate: '2025-03-06', amountCents: -2000, currency: 'EUR', purpose: 'ALDI SÜD 0815', category: 'Groceries' },
+  { bookingDate: '2025-03-07', valueDate: '2025-03-07', amountCents: -1000, currency: 'EUR', purpose: 'U-BHF BERLIN', category: 'Transport' },
+  { bookingDate: '2025-02-20', valueDate: '2025-02-20', amountCents: 125000, currency: 'EUR', purpose: 'BONUSZAHLUNG', category: 'Income' },
+]
 
-const ins = db.prepare(`INSERT OR IGNORE INTO transactions (bookingDate, amountCents, currency, purpose, category, fingerprint) VALUES (?,?,?,?,?,?)`);
+insertManyTransactions(db, rows)
 
-const now = new Date();
-const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-const prev = new Date(now.getFullYear(), now.getMonth()-1, 1);
-const ymp = `${prev.getFullYear()}-${String(prev.getMonth()+1).padStart(2,'0')}`;
-
-const rows: Array<[string, number, string, string | null]> = [
-  [`${ym}-01`, 320000, 'GEHALT ACME GMBH', 'income'],
-  [`${ym}-02`, -3124, 'REWE MARKT 123', 'groceries'],
-  [`${ym}-03`, -990, 'KARTENENTGELT', 'fees'],
-  [`${ym}-04`, -45000, 'MIETE', 'housing'],
-  [`${ym}-05`, -1299, 'NETFLIX', 'subscriptions'],
-  [`${ym}-06`, 12345, 'ERSTATTUNG SHOP', 'income'],
-  [`${ymp}-10`, -2599, 'ALDI SÜD', 'groceries'],
-  [`${ymp}-11`, -5600, 'DEUTSCHE BAHN', 'transport'],
-];
-
-for (const [d, c, p, cat] of rows) {
-  ins.run(d, c, 'EUR', p, cat, fp(d, c, p));
-}
-
-console.log('Seeded', rows.length, 'transactions');
+console.log('Seeded', rows.length, 'transactions for 2025-02/2025-03')
 
 

@@ -1,133 +1,147 @@
-import { useEffect, useMemo, useState } from 'react'
-import { PieChart, BarChart } from '../lib/chart'
-import { apiSummary, apiDev } from '../lib/api'
-import TrophiesPanel from '../components/TrophiesPanel'
+import { useEffect, useState } from 'react';
+import { Card, CardBody, Stat } from '../components/ui/Card';
+import { Donut } from '../components/charts/Donut';
+import { MonthBars } from '../components/charts/MonthBars';
 
-type Tx = { id?: string; bookingDate?: string; purpose?: string; amountCents?: number; currency?: string }
+type BalanceResp = { data: { balanceCents: number; currency: string } };
+type MonthlyResp = { data: { month: string; incomeCents: number; expenseCents: number }[] };
+type CategoriesResp = { data: { category: string; amountCents: number }[] };
+type Tx = { id: number; bookingDate: string; purpose: string; amountCents: number; currency: string };
 
 export default function Dashboard() {
-  const [recent, setRecent] = useState<Tx[]>([])
-  const [balance, setBalance] = useState<number>(0)
-  const [incomeMTD, setIncomeMTD] = useState<number>(0)
-  const [expenseMTD, setExpenseMTD] = useState<number>(0)
-  const [catEntries, setCatEntries] = useState<{ category: string; sumCents: number; count?: number }[]>([])
-  const [monthly, setMonthly] = useState<{ label: string; incomeCents: number; expenseCents: number }[]>([])
-  const [baseMonth, setBaseMonth] = useState<string | null>(null)
-  const [apiOk, setApiOk] = useState<boolean | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const fmt = (cents?: number, cur='EUR') =>
-    (typeof cents === 'number')
-      ? (cents/100).toLocaleString('de-DE', { style:'currency', currency: cur })
-      : '—'
+  const [balance, setBalance] = useState<BalanceResp['data']>({ balanceCents: 0, currency: 'EUR' });
+  const [monthly, setMonthly] = useState<MonthlyResp['data']>([]);
+  const [cats, setCats] = useState<CategoriesResp['data']>([]);
+  const [recent, setRecent] = useState<Tx[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false
-    const reloadAll = async () => {
+    let cancelled = false;
+    const load = async () => {
       try {
-        const [txsResp, balResp, monsResp, health] = await Promise.all([
-          fetch('/api/transactions?limit=10').then(r => r.json()).catch(() => ({ data: [] })),
-          apiSummary.balance().catch(() => ({ balanceCents: 0, currency: 'EUR' })),
-          apiSummary.months6().catch(() => ({ baseMonth: null, series: [] })),
-          fetch('/api/health').then(r => r.json()).catch(() => ({ ok: false })),
-        ])
-        if (cancelled) return
-        setRecent(Array.isArray(txsResp?.data) ? (txsResp.data as any[]) : [])
-        setBalance((balResp?.balanceCents as number) ?? 0)
-        setApiOk(Boolean(health?.ok))
-        setBaseMonth(monsResp?.baseMonth ?? null)
-        setMonthly(Array.isArray(monsResp?.series) ? monsResp.series : [])
-        try {
-          const m = await apiSummary.month(monsResp?.baseMonth ?? undefined)
-          setIncomeMTD(m.incomeCents ?? 0)
-          setExpenseMTD(m.expenseCents ?? 0)
-        } catch {}
-        try {
-          const catsResp = await apiSummary.categories()
-          const items = (catsResp?.items ?? []).filter(i => typeof i.spendCents === 'number').sort((a, b) => (b.spendCents ?? 0) - (a.spendCents ?? 0))
-          const top = items.slice(0, 6)
-          const rest = items.slice(6)
-          const restSum = rest.reduce((acc, item) => acc + (item.spendCents ?? 0), 0)
-          const merged = [...top]
-          if (restSum > 0) merged.push({ category: 'Other', spendCents: restSum })
-          setCatEntries(merged.map(i => ({ category: i.category, sumCents: i.spendCents ?? 0 })))
-        } catch {}
-        setError(null)
-      } catch {
-        if (!cancelled) setError('Fehler beim Laden der Übersicht.')
+        const [balanceRes, monthlyRes, catsRes, recentRes] = await Promise.all([
+          fetch('/api/summary/balance').then(r => r.json()).catch(() => ({ data: { balanceCents: 0, currency: 'EUR' } })),
+          fetch('/api/summary/monthly?months=6').then(r => r.json()).catch(() => ({ data: [] })),
+          fetch('/api/summary/categories').then(r => r.json()).catch(() => ({ data: [] })),
+          fetch('/api/transactions?limit=8').then(r => r.json()).catch(() => ({ data: [] })),
+        ]);
+        if (cancelled) return;
+        setBalance((balanceRes as BalanceResp).data);
+        setMonthly((monthlyRes as MonthlyResp).data);
+        setCats((catsRes as CategoriesResp).data);
+        setRecent((recentRes as { data: Tx[] }).data || []);
+      } catch (err) {
+        console.error('[dashboard] load error:', err);
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setLoading(false);
       }
-    }
-    reloadAll()
-    const onUpdate = () => { setLoading(true); reloadAll() }
-    window.addEventListener('nimbus:data-updated', onUpdate)
-    return () => { cancelled = true; window.removeEventListener('nimbus:data-updated', onUpdate) }
-  }, [])
+    };
+    load();
+    const onUpdate = () => load();
+    window.addEventListener('nimbus:data-updated', onUpdate);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('nimbus:data-updated', onUpdate);
+    };
+  }, []);
 
-  const money = (n: number) => (n/100).toLocaleString('de-DE', { style:'currency', currency: 'EUR' })
-  const pieData = useMemo(() => (catEntries || [])
-    .filter(e => (e.category || 'Other') !== 'Income')
-    .map(e => ({ label: e.category || 'Other', value: Math.max(0, e.sumCents) })), [catEntries])
-  const barData = useMemo(() => (monthly || []).map(m => ({ label: m.label, value: Math.abs(m.expenseCents) })), [monthly])
+  const fmt = (cents: number) => `${(cents / 100).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €`;
 
-  if (loading) return <div>Laden…</div>
+  const donutData = cats
+    .filter(c => c.category && c.category !== 'Income')
+    .map(c => ({ name: c.category || 'Other', value: Math.abs(c.amountCents) }))
+    .filter(d => d.value > 0);
+
+  const income6M = monthly.reduce((a, b) => a + (b.incomeCents || 0), 0);
+  const expense6M = monthly.reduce((a, b) => a + (b.expenseCents || 0), 0);
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-7xl p-4 md:p-8 space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => (
+            <Card key={i}>
+              <CardBody>
+                <div className="animate-pulse space-y-2">
+                  <div className="h-4 w-24 bg-slate-200 rounded"></div>
+                  <div className="h-8 w-32 bg-slate-200 rounded"></div>
+                </div>
+              </CardBody>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div>
-      <h1 style={{ display:'flex', alignItems:'center', gap: 8 }}>
-        Nimbus Finance
-        <span style={{ fontSize: 12, padding: '2px 6px', borderRadius: 999, background: apiOk ? '#dcfce7' : '#e5e7eb', color: apiOk ? '#065f46' : '#374151' }}>
-          API: {apiOk ? 'ok' : 'offline'}
-        </span>
-      </h1>
-      {error && <div style={{ fontSize: 12, color:'#b91c1c', marginTop: 6 }}>Fehler beim Laden der Übersicht.</div>}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap: 12, marginTop: 12 }}>
-        <Kpi title="Saldo gesamt" value={money(balance)} />
-        <Kpi title={`Einnahmen (${baseMonth ?? 'Monat'})`} value={money(incomeMTD)} />
-        <Kpi title={`Ausgaben (${baseMonth ?? 'Monat'})`} value={money(expenseMTD)} />
+    <div className="mx-auto max-w-7xl p-4 md:p-8 space-y-6">
+      {/* KPI Row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <CardBody>
+            <Stat label="Saldo gesamt" value={fmt(balance.balanceCents)} />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody>
+            <Stat label="Einnahmen (6M)" value={fmt(income6M)} />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody>
+            <Stat label="Ausgaben (6M)" value={fmt(expense6M)} />
+          </CardBody>
+        </Card>
       </div>
 
-      <div style={{ marginTop: 12 }}>
-        <TrophiesPanel />
+      {/* Charts Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card>
+          <CardBody>
+            <div className="mb-3 text-slate-700 font-medium">Monatsüberblick (6M)</div>
+            {monthly.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">Keine Daten verfügbar.</div>
+            ) : (
+              <MonthBars data={monthly} />
+            )}
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody>
+            <div className="mb-3 text-slate-700 font-medium">Ausgaben nach Kategorien</div>
+            {donutData.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">Keine Daten verfügbar.</div>
+            ) : (
+              <Donut data={donutData} />
+            )}
+          </CardBody>
+        </Card>
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap: 16, marginTop: 16 }}>
-        <div>
-          <h3>Ausgaben nach Kategorien</h3>
-          {pieData.length === 0 ? <div style={{ fontSize: 12, opacity: .7 }}>Keine Daten.</div> : <PieChart data={pieData} />}
-        </div>
-        <div>
-          <h3>Monatsüberblick (6M)</h3>
-          {barData.length === 0 ? <div style={{ fontSize: 12, opacity: .7 }}>Keine Daten.</div> : <BarChart data={barData} />}
-        </div>
-      </div>
-
-      {import.meta.env.DEV && (
-        <div style={{ marginTop: 12 }}>
-          <button onClick={async () => { await apiDev.reset(); location.reload(); }}>Daten zurücksetzen</button>
-        </div>
-      )}
-
-      <h3 style={{ marginTop: 16 }}>Letzte Buchungen</h3>
-      <ul style={{paddingLeft:16}}>
-        {recent.map((t, i) => (
-          <li key={t.id ?? i}>
-            {t.bookingDate ?? '—'} · {t.purpose ?? '—'} · <strong>{fmt(t.amountCents, t.currency)}</strong>
-          </li>
-        ))}
-        {recent.length === 0 && <li>Keine Daten. Lade eine CSV hoch.</li>}
-      </ul>
+      {/* Recent */}
+      <Card>
+        <CardBody>
+          <div className="mb-4 text-slate-700 font-medium">Letzte Buchungen</div>
+          <ul className="divide-y divide-slate-100">
+            {recent.length === 0 ? (
+              <li className="py-6 text-slate-400">Keine Daten. — lade eine CSV hoch!</li>
+            ) : (
+              recent.map(tx => (
+                <li key={tx.id} className="py-3 flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="text-slate-900">{tx.purpose || '—'}</div>
+                    <div className="text-sm text-slate-500">{tx.bookingDate ? new Date(tx.bookingDate).toLocaleDateString('de-DE') : '—'}</div>
+                  </div>
+                  <div className={`font-medium tabular-nums ${(tx.amountCents ?? 0) < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    {fmt(tx.amountCents ?? 0)}
+                  </div>
+                </li>
+              ))
+            )}
+          </ul>
+        </CardBody>
+      </Card>
     </div>
-  )
+  );
 }
-
-function Kpi({ title, value }: { title: string; value: string }) {
-  return (
-    <div style={{ padding: 12, border: '1px solid #e5e7eb', borderRadius: 8 }}>
-      <div style={{ fontSize: 12, opacity: .7 }}>{title}</div>
-      <div style={{ fontSize: 20, fontWeight: 600 }}>{value}</div>
-    </div>
-  )
-}
-
-

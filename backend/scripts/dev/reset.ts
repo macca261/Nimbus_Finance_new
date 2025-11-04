@@ -1,15 +1,28 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import fs from 'node:fs'
+import path from 'node:path'
 
-const dataDir = path.join(__dirname, '..', '..', 'data');
-const dbPath = path.join(dataDir, 'dev.db');
+const envPath = (process.env.NIMBUS_DB_PATH || '').trim()
+const fallback = path.join(__dirname, '..', '..', 'data', 'nimbus.sqlite')
+const targets = [envPath ? path.resolve(envPath) : fallback]
 
-try { if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath); } catch {}
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+// Clean up legacy dev.db if present
+const legacy = path.join(__dirname, '..', '..', 'data', 'dev.db')
+if (!targets.includes(legacy)) targets.push(legacy)
 
-// Import db to re-create schema
+for (const target of targets) {
+  if (!target) continue
+  const dir = path.dirname(target)
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  try { if (fs.existsSync(target)) fs.unlinkSync(target) } catch {}
+}
+
+// Re-require DB to re-create schema on the default path
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-require('../../src/db');
-console.log('DB reset at', dbPath);
+const loaded = require('../../src/db')
+const resolved = envPath ? path.resolve(envPath) : fallback
+console.log('DB reset at', resolved)
+
+// keep requirement so TypeScript doesn't remove unused import
+void loaded
 
 

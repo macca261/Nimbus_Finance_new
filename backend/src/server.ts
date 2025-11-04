@@ -2,13 +2,21 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import dotenv from 'dotenv';
-import { db as defaultDb, insertTransactions, getBalance, getRecentTransactions, clearAll, openDb, initDb, ensureSchema, dbPath } from './db';
+import { db as defaultDb, insertTransactions, getBalance, getRecentTransactions, clearAll, openDb, initDb, ensureSchema, prepareDb, replaceDb, dbPath } from './db';
 import { insertManyTransactions, type InsertRow } from './insert';
 import { evaluateAll } from './services/achievements';
 import summaryRouter from './routes/summary';
 import { inferCategory } from './categorize';
-import { TextDecoder } from 'node:util';
+import achievementsRouter from './routes/achievements';
 import os from 'node:os';
+import fs from 'node:fs';
+import { decodeCsvBuffer } from './lib/text';
+import { parseGermanCSV } from './parsers/generic_de';
+
+function toCsvLine(values: (string | number | null | undefined)[]): string {
+  const esc = (value: string) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
+  return values.map(v => esc(v == null ? '' : String(v))).join(',') + '\n';
+}
 
 dotenv.config();
 
@@ -30,7 +38,7 @@ export type CanonicalRow = {
   accountIban?: string;
   rawCode?: string;
 };
-export type ParseResult = { adapterId: string; rows: CanonicalRow[] };
+export type ParseResult = { adapterId: string; rows: CanonicalRow[]; _debug?: any };
 export interface Parser { parseBufferAuto(buf: Buffer, opts?: any): Promise<ParseResult>; }
 
 function parseEuroToCents(input: string): number {
@@ -77,7 +85,8 @@ function makeDefaultParser(): Parser {
   // Fallback minimal CSV parser
   return {
     async parseBufferAuto(buf: Buffer): Promise<ParseResult> {
-      const text = buf.toString('utf8');
+      const decoded = decodeCsvBuffer(buf);
+      const text = decoded.text;
       const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
       if (lines.length < 2) throw new Error('no rows');
       const delim = (lines[0].includes(';') ? ';' : ',');
@@ -106,7 +115,7 @@ function makeDefaultParser(): Parser {
         const rawCode = (H.code >= 0 ? cols[H.code] : '') || '';
         if (bookingDate) rows.push({ bookingDate, valueDate: valueDate ?? null, amountCents, currency, purpose, counterpartName, accountIban, rawCode });
       }
-      return { adapterId: 'mock.csv', rows };
+      return { adapterId: 'mock.csv', rows, _debug: { encoding: decoded.encoding } as any };
     }
   } as Parser;
 }
@@ -144,7 +153,9 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
 
 // Summary router
   app.use('/api/summary', summaryRouter);
+  app.use('/api/achievements', achievementsRouter);
   console.log('Mounted: /api/summary/*');
+  console.log('Mounted: /api/achievements');
 
 // Health
   app.get('/api/health', (req, res) => {
@@ -204,131 +215,78 @@ const upload = multer({
 
   app.post('/api/imports/csv', upload.single('file'), async (req, res) => {
     try {
-      if (!req.file) {
-        return res.status(400).json({ error: 'Datei fehlt. Feld "file" ist erforderlich.' });
+      if (!req.file?.buffer) {
+        return res.status(400).json({ error: 'Keine Datei empfangen.' });
       }
       try {
         console.log('[import] received file', {
-          hasFile: Boolean(req.file),
-          size: req.file?.size,
-          mimetype: req.file?.mimetype,
-          originalname: req.file?.originalname,
+          size: req.file.size,
+          mimetype: req.file.mimetype,
+          originalname: req.file.originalname,
         });
       } catch {}
-      const buf = req.file.buffer;
 
-      // Parse via injected/default parser; never let parser errors 500
-      let parsed: any;
+      let parseResult;
       try {
-        parsed = await parser.parseBufferAuto(buf, { accountId: 'default' });
-        try {
-          const keys = parsed && typeof parsed === 'object' ? Object.keys(parsed) : [];
-          console.log('[import] parser result keys', keys);
-          console.log('[import] sample result', JSON.stringify({ adapterId: parsed?.adapterId, rowsCount: Array.isArray(parsed?.rows) ? parsed.rows.length : 0 }));
-        } catch {}
+        parseResult = parseGermanCSV(req.file.buffer);
       } catch (e: any) {
         console.error('[import] parse error:', e?.message || e);
-        // Try fallback parser before failing
-        try {
-          const rows = fallbackParseGermanCSV(buf);
-          if (Array.isArray(rows) && rows.length > 0) {
-            try { console.info('[import] using fallback CSV parser. rows=', rows.length); } catch {}
-            const before = ((req.app as any).locals.db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? 0;
-            const insert = (req.app as any).locals.db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose) VALUES (?,?,?,?,?)`);
-            const tx = (req.app as any).locals.db.transaction((arr: any[]) => { for (const t of arr) insert.run(t.bookingDate, t.valueDate ?? null, t.amountCents, t.currency ?? 'EUR', t.purpose ?? ''); });
-            tx(rows);
-            const after = ((req.app as any).locals.db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? before;
-            const range = (req.app as any).locals.db.prepare(`SELECT MIN(bookingDate) AS minDate, MAX(bookingDate) AS maxDate FROM transactions`).get() as { minDate?: string; maxDate?: string };
-            console.log('[import] dbPath=', dbPath, 'added=', (after - before), 'now count=', after, 'range=', range);
-            return res.json({ data: { adapterId: 'fallback.csv', imported: (after - before), duplicates: 0, dbPath } });
-          }
-        } catch {}
-        return res.status(422).json({ error: 'CSV konnte nicht verarbeitet werden. Bitte prüfen Sie Trennzeichen (;) und Dezimalformat (z.B. 1.234,56).' });
-      }
-
-      const { adapterId, rows, _debug } = parsed || {};
-      console.info('[import] adapter:', adapterId, 'count:', Array.isArray(rows) ? rows.length : 0, 'debug:', _debug || null);
-
-      if (!adapterId) {
-        return res.status(415).json({ error: 'unsupported_format', message: 'Datei-Format nicht erkannt.' });
-      }
-      if (!Array.isArray(rows) || rows.length === 0) {
-        // Fallback when primary parser yields 0 rows
-        try {
-          console.warn('[import] parser returned 0 rows – using fallback CSV parser');
-          const fallbackRows = fallbackParseGermanCSV(buf);
-          if (Array.isArray(fallbackRows) && fallbackRows.length > 0) {
-            const before = ((req.app as any).locals.db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? 0;
-            const insert = (req.app as any).locals.db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose) VALUES (?,?,?,?,?)`);
-            const tx = (req.app as any).locals.db.transaction((arr: any[]) => { for (const t of arr) insert.run(t.bookingDate, t.valueDate ?? null, t.amountCents, t.currency ?? 'EUR', t.purpose ?? ''); });
-            tx(fallbackRows);
-            const after = ((req.app as any).locals.db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? before;
-            const range = (req.app as any).locals.db.prepare(`SELECT MIN(bookingDate) AS minDate, MAX(bookingDate) AS maxDate FROM transactions`).get() as { minDate?: string; maxDate?: string };
-            console.log('[import] dbPath=', dbPath, 'added=', (after - before), 'now count=', after, 'range=', range);
-            return res.json({ data: { adapterId: adapterId || 'fallback.csv', imported: (after - before), duplicates: 0, dbPath } });
-          }
-        } catch {}
         return res.status(422).json({
-          error: 'parse_error',
-          message: `Parser erkannte ${adapterId}, aber keine Buchungen gefunden.`,
-          details: _debug || undefined,
+          error: 'CSV konnte nicht verarbeitet werden. Bitte prüfen Sie Trennzeichen (;) und Dezimalformat (z.B. 1.234,56).',
+          reason: e?.message || 'Unbekannter Fehler',
         });
       }
 
-      const list = Array.isArray(rows) ? rows : [];
-      const txs = list.map((r: any) => ({
-        bookingDate: r?.bookingDate || r?.Buchungstag || r?.date || r?.buchung || r?.Datum || null,
-        valueDate: r?.valueDate || r?.Valuta || r?.valuta || r?.Wertstellung || r?.date || null,
-        amountCents: (Number.isFinite(r?.amountCents) ? Math.round(Number(r?.amountCents)) : toCents(r?.amount ?? r?.Betrag ?? r?.umsatz ?? r?.Amount)),
-        currency: r?.currency || r?.Währung || r?.Currency || 'EUR',
-        purpose: (r?.purpose ?? r?.Verwendungszweck ?? r?.text ?? r?.Buchungstext ?? '').toString().trim() || null,
-        counterpartName: (r?.name ?? r?.Empfaenger ?? r?.Beguenstigter ?? r?.['Begünstigter/Zahlungspflichtiger'] ?? '').toString().trim() || null,
-        accountIban: r?.iban || r?.IBAN || null,
-        rawCode: r?.code || r?.Umsatzart || r?.Kennzeichen || null,
-      })).filter(t => Number.isFinite(t.amountCents) && t.bookingDate);
-
-      if (txs.length === 0) {
-        const aid = typeof parsed?.adapterId === 'string' ? parsed.adapterId : undefined;
-        if (aid) return res.status(422).json({ error: `Parser erkannte '${aid}', aber es wurden keine Zeilen erkannt (Header/Trennzeichen prüfen).` });
-        return res.status(415).json({ error: 'Unsupported file format.' });
-      }
-
-      try {
-        console.log('[import] writing to db:', dbPath);
-        console.log('[import] adapter=', adapterId, 'parsed=', rows.length);
-        const mappedRows: InsertRow[] = txs.map(r => {
-          const normalizedPurpose = (r.purpose ?? '').toString().trim();
-          const normalized: InsertRow = {
-            bookingDate: r.bookingDate,
-            valueDate: r.valueDate ?? r.bookingDate,
-            amountCents: r.amountCents,
-            currency: r.currency ?? 'EUR',
-            purpose: normalizedPurpose,
-            counterpartName: r.counterpartName ?? null,
-            accountIban: r.accountIban ?? null,
-            rawCode: r.rawCode ?? null,
-            category: null,
-          };
-          const category = inferCategory({
-            purpose: normalized.purpose,
-            counterpartName: normalized.counterpartName ?? undefined,
-            rawCode: normalized.rawCode ?? undefined,
-          });
-          normalized.category = category;
-          return normalized;
+      if (!parseResult.rows || !Array.isArray(parseResult.rows) || parseResult.rows.length === 0) {
+        return res.status(422).json({
+          error: 'CSV konnte nicht verarbeitet werden.',
+          reason: 'Keine Zeilen gefunden.',
+          _debug: parseResult._debug,
         });
-        const { inserted, duplicates } = insertManyTransactions((req.app as any).locals.db, mappedRows);
-        console.log('[import] result inserted=', inserted, 'duplicates=', duplicates);
-        const payload = { adapterId: parsed?.adapterId, imported: inserted, duplicates };
-        try { await evaluateAll(); } catch {}
-        return res.json({ data: payload });
-      } catch (e: any) {
-        return res.status(500).json({ error: e?.message || 'DB insert failed' });
       }
-    } catch (err) {
-      // As a last resort, map to 422 instead of 500
-      console.error('[import] unexpected error:', (err as any)?.message || err);
-      return res.status(422).json({ error: 'Import fehlgeschlagen.' });
+
+      // Map parser rows to InsertRow format
+      const db = (req.app as any).locals.db;
+      const mappedRows: InsertRow[] = parseResult.rows.map(r => {
+        const normalized: InsertRow = {
+          bookingDate: r.bookingDate,
+          valueDate: r.valueDate ?? r.bookingDate,
+          amountCents: r.amountCents,
+          currency: r.currency ?? 'EUR',
+          purpose: r.purpose || '',
+          counterpartName: r.counterpartName ?? null,
+          accountIban: r.accountIban ?? null,
+          rawCode: r.rawCode ?? null,
+          category: null,
+        };
+        const category = inferCategory({
+          purpose: normalized.purpose,
+          counterpartName: normalized.counterpartName ?? undefined,
+          rawCode: normalized.rawCode ?? undefined,
+        });
+        normalized.category = category;
+        return normalized;
+      });
+
+      const { inserted, duplicates } = insertManyTransactions(db, mappedRows);
+      console.log('[import] result inserted=', inserted, 'duplicates=', duplicates, 'adapterId=', parseResult.adapterId);
+
+      try { await evaluateAll(); } catch {}
+
+      return res.json({
+        data: {
+          adapterId: parseResult.adapterId,
+          imported: inserted,
+          duplicates,
+          _debug: parseResult._debug,
+        },
+      });
+    } catch (err: any) {
+      console.error('[import] unexpected error:', err?.message || err);
+      return res.status(422).json({
+        error: 'Import fehlgeschlagen.',
+        reason: err?.message || 'Unbekannter Fehler',
+      });
     }
   });
 
@@ -375,6 +333,68 @@ app.get('/api/summary/month', (req, res) => {
   const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10));
   const rows = getRecentTransactions(limit, (req.app as any).locals.db);
     res.json({ data: rows });
+  });
+
+  app.get('/api/transactions.csv', (req, res) => {
+    const rawLimit = Number.parseInt(String(req.query.limit ?? '1000'), 10);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(5000, rawLimit)) : 1000;
+    const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+    const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
+
+    const filters: string[] = [];
+    const params: unknown[] = [];
+    if (dateFrom) {
+      filters.push('bookingDate >= ?');
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      filters.push('bookingDate <= ?');
+      params.push(dateTo);
+    }
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    params.push(limit);
+
+    const rows = ((req.app as any).locals.db as import('better-sqlite3').Database)
+      .prepare(`
+        SELECT id, bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, rawCode, createdAt
+        FROM transactions
+        ${whereClause}
+        ORDER BY date(bookingDate) DESC, id DESC
+        LIMIT ?
+      `)
+      .all(...params) as {
+        id: number;
+        bookingDate: string | null;
+        valueDate: string | null;
+        amountCents: number | null;
+        currency: string | null;
+        purpose: string | null;
+        counterpartName: string | null;
+        accountIban: string | null;
+        rawCode: string | null;
+        createdAt: string | null;
+      }[];
+
+    const header = ['id','bookingDate','valueDate','amountCents','currency','purpose','counterpartName','accountIban','rawCode','createdAt'];
+    let csv = toCsvLine(header);
+    for (const row of rows) {
+      csv += toCsvLine([
+        row.id,
+        row.bookingDate,
+        row.valueDate,
+        row.amountCents,
+        row.currency,
+        row.purpose,
+        row.counterpartName,
+        row.accountIban,
+        row.rawCode,
+        row.createdAt,
+      ]);
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="transactions.csv"');
+    res.send(csv);
   });
 
 // Categories breakdown
@@ -465,11 +485,17 @@ app.get('/api/summary/monthly-6', (req, res) => {
   app.post('/api/debug/reset', (req, res) => {
     if (process.env.NODE_ENV === 'production') return res.status(403).json({ error: 'forbidden' });
     try {
-      const db = (req.app as any).locals.db;
-      db.exec('DELETE FROM transactions');
-      try { db.prepare('DELETE FROM sqlite_sequence WHERE name = ?').run('transactions'); } catch {}
-      const count = (db.prepare('SELECT COUNT(1) AS c FROM transactions').get() as { c: number })?.c ?? 0;
-      res.json({ data: { reset: true, count, dbPath } });
+      const current = (req.app as any).locals.db as import('better-sqlite3').Database;
+      const currentPath = current?.name as string | undefined;
+      try { current.close(); } catch {}
+      if (currentPath && currentPath !== ':memory:') {
+        try { fs.unlinkSync(currentPath); } catch {}
+      }
+      const fresh = openDb();
+      prepareDb(fresh);
+      replaceDb(fresh);
+      (req.app as any).locals.db = fresh;
+      res.json({ ok: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || 'reset failed' });
     }
@@ -480,30 +506,13 @@ app.get('/api/summary/monthly-6', (req, res) => {
     res.json({ ok: true });
   });
 
-  app.get('/api/achievements', (req, res) => {
-    try {
-      const db = (req.app as any).locals.db;
-      const rows = db.prepare(`
-        SELECT a.code, a.title, a.description, a.tier,
-               ua.unlockedAt, COALESCE(ua.progress,0) AS progress
-        FROM achievements a
-        LEFT JOIN user_achievements ua ON ua.achievementCode = a.code
-        ORDER BY CASE a.tier WHEN 'gold' THEN 3 WHEN 'silver' THEN 2 ELSE 1 END DESC, a.code ASC
-      `).all() as { code: string; title: string; description: string; tier: string; unlockedAt?: string; progress: number }[];
-      const data = rows.map(r => ({ code: r.code, title: r.title, description: r.description, tier: r.tier as any, unlocked: Boolean(r.unlockedAt), unlockedAt: r.unlockedAt || undefined, progress: r.progress ?? 0 }));
-      res.json({ data });
-    } catch {
-      res.json({ data: [] });
-    }
-  });
-
 // Debug: last rows
   app.get('/api/debug/rows', (req, res) => {
     try {
       const db = (req.app as any).locals.db;
       const limit = Math.max(1, Math.min(200, Number((req.query as any)?.limit) || 5));
       const rows = db.prepare(`
-        SELECT id, bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, rawCode, createdAt
+        SELECT id, bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, rawCode, category, createdAt
         FROM transactions
         ORDER BY COALESCE(createdAt, bookingDate) DESC, id DESC
         LIMIT ?
@@ -555,13 +564,7 @@ app.get('/api/summary/monthly-6', (req, res) => {
     }
   });
 
-  function fallbackParseGermanCSV(buf: Buffer) {
-    let text: string;
-    try {
-      text = new TextDecoder('utf-8', { fatal: false } as any).decode(buf);
-    } catch {
-      text = buf.toString('latin1');
-    }
+  function fallbackParseGermanCSV(text: string) {
     const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
     if (lines.length === 0) return [] as any[];
     const header = lines[0].split(';').map(s => s.trim().toLowerCase());
