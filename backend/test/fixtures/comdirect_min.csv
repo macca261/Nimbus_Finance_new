@@ -1,0 +1,7 @@
+Umsätze Girokonto;Zeitraum: 30 Tage
+Neuer Kontostand;1.234,56 EUR
+Buchungstag;Wertstellung (Valuta);Vorgang;Buchungstext;Umsatz in EUR
+01.10.2025;01.10.2025;Kartenzahlung;REWE MARKT 123; -17,53
+02.10.2025;02.10.2025;Kartenzahlung;LIDL FILIALE 42; -15,80
+03.10.2025;03.10.2025;Gehalt;ACME GMBH; 2300,00
+

@@ -56,11 +56,14 @@ achievements.get('/', (req, res) => {
     console.log('[achievements] debug rows', rows);
     console.log('[achievements] debug cents', { incomeCents, expenseCents, netCents });
 
-    const feeCount = rows.filter(r => (r.category ?? '').toLowerCase() === 'fees').length;
+    const feeCategories = new Set(['fees', 'fees_charges']);
+    const groceryCategories = new Set(['groceries']);
+
+    const feeCount = rows.filter(r => feeCategories.has((r.category ?? '').toLowerCase())).length;
 
     const grocerySpendCents = sumCents(
       rows
-        .filter(r => (r.category ?? '').toLowerCase() === 'groceries' && (r.amountCents ?? 0) < 0)
+        .filter(r => groceryCategories.has((r.category ?? '').toLowerCase()) && (r.amountCents ?? 0) < 0)
         .map(r => -(r.amountCents ?? 0))
     );
 

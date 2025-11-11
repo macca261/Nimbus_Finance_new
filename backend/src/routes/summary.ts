@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { startOfMonth, endOfMonth, firstDayMonthsAgo, lastDayMonthsAgo, getMonthRange } from '../lib/dates';
+import { isValidCategory } from '../config/categories';
+import type { CategoryId } from '../config/categories';
 
 const summary = Router();
 
@@ -70,7 +72,7 @@ summary.get('/categories', (req, res) => {
     }
     const sql = `
       SELECT
-        COALESCE(NULLIF(TRIM(category), ''), 'Other') AS category,
+        COALESCE(NULLIF(TRIM(category), ''), 'other_review') AS category,
         SUM(CASE WHEN amountCents < 0 THEN amountCents ELSE 0 END) AS spendCents,
         SUM(CASE WHEN amountCents > 0 THEN amountCents ELSE 0 END) AS incomeCents
       FROM transactions
@@ -81,11 +83,12 @@ summary.get('/categories', (req, res) => {
     `;
     const rows = db.prepare(sql).all(...params) as { category: string; spendCents: number | null; incomeCents: number | null }[];
     const data = (rows ?? []).map(r => {
-      const category = r.category || 'Other';
+      const rawId = (r.category ?? '').trim();
+      const categoryId: CategoryId = isValidCategory(rawId) ? rawId : 'other_review';
       const spend = Math.abs(r.spendCents ?? 0);
       const income = Math.trunc(r.incomeCents ?? 0);
-      const amountCents = category === 'Income' ? income : Math.trunc(spend);
-      return { category, amountCents };
+      const amountCents = categoryId.startsWith('income_') ? income : Math.trunc(spend);
+      return { category: categoryId, amountCents };
     });
     res.json({ data });
   } catch {

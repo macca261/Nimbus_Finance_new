@@ -1,4 +1,4 @@
-import createApp from '../../src/server';
+import { createApp } from '../../src/server';
 import { openDb, initDb, resetDb } from '../../src/db';
 import path from 'node:path';
 
@@ -12,7 +12,7 @@ export function makeTestApp() {
 }
 
 export function fixturePath(rel: string) {
-  return path.join(process.cwd(), 'backend', 'tests', 'fixtures', rel);
+  return path.join(__dirname, '..', 'fixtures', rel);
 }
 
 

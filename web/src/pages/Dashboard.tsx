@@ -1,147 +1,205 @@
-import { useEffect, useState } from 'react';
-import { Card, CardBody, Stat } from '../components/ui/Card';
-import { Donut } from '../components/charts/Donut';
-import { MonthBars } from '../components/charts/MonthBars';
+import React, { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { AppShell } from '../layout/AppShell';
+import { useDashboardState } from '../hooks/useDashboardState';
+import { DashboardHeader } from '../components/dashboard/DashboardHeader';
+import { DashboardKpiRow } from '../components/dashboard/DashboardKpiRow';
+import { DashboardBalanceChart } from '../components/dashboard/DashboardBalanceChart';
+import { DashboardCategoryPanel } from '../components/dashboard/DashboardCategoryPanel';
+import { DashboardTiles } from '../components/dashboard/DashboardTiles';
+import { DashboardEmptyState } from '../components/dashboard/DashboardEmptyState';
+import { RecentActivityMini } from '../components/dashboard/RecentActivityMini';
+import { formatCurrency, formatPercent } from '../lib/format';
+import { EngagementStrip } from '../components/dashboard/EngagementStrip';
+import { InsightsRow } from '../components/dashboard/InsightsRow';
 
-type BalanceResp = { data: { balanceCents: number; currency: string } };
-type MonthlyResp = { data: { month: string; incomeCents: number; expenseCents: number }[] };
-type CategoriesResp = { data: { category: string; amountCents: number }[] };
-type Tx = { id: number; bookingDate: string; purpose: string; amountCents: number; currency: string };
+export const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
+  const dashboard = useDashboardState();
+  const summary = dashboard.summary;
 
-export default function Dashboard() {
-  const [balance, setBalance] = useState<BalanceResp['data']>({ balanceCents: 0, currency: 'EUR' });
-  const [monthly, setMonthly] = useState<MonthlyResp['data']>([]);
-  const [cats, setCats] = useState<CategoriesResp['data']>([]);
-  const [recent, setRecent] = useState<Tx[]>([]);
-  const [loading, setLoading] = useState(true);
+  const headerSubtitle = useMemo(() => {
+    const accountLabel =
+      dashboard.accountsCount === 1
+        ? '1 Konto'
+        : `${dashboard.accountsCount.toLocaleString('de-DE')} Konten`;
+    const paypalLabel =
+      dashboard.paypalWalletsCount === 1
+        ? '1 PayPal Wallet'
+        : `${dashboard.paypalWalletsCount.toLocaleString('de-DE')} PayPal Wallets`;
+    return `Stand: ${dashboard.selectedPeriodOption.label} · ${accountLabel} · ${paypalLabel}`;
+  }, [dashboard.accountsCount, dashboard.paypalWalletsCount, dashboard.selectedPeriodOption.label]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const [balanceRes, monthlyRes, catsRes, recentRes] = await Promise.all([
-          fetch('/api/summary/balance').then(r => r.json()).catch(() => ({ data: { balanceCents: 0, currency: 'EUR' } })),
-          fetch('/api/summary/monthly?months=6').then(r => r.json()).catch(() => ({ data: [] })),
-          fetch('/api/summary/categories').then(r => r.json()).catch(() => ({ data: [] })),
-          fetch('/api/transactions?limit=8').then(r => r.json()).catch(() => ({ data: [] })),
-        ]);
-        if (cancelled) return;
-        setBalance((balanceRes as BalanceResp).data);
-        setMonthly((monthlyRes as MonthlyResp).data);
-        setCats((catsRes as CategoriesResp).data);
-        setRecent((recentRes as { data: Tx[] }).data || []);
-      } catch (err) {
-        console.error('[dashboard] load error:', err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  const kpiData = useMemo(() => {
+    const income = summary?.kpis.income30d ?? 0;
+    const expenses = summary?.kpis.expenses30d ?? 0;
+    const balance = summary?.kpis.currentBalance ?? 0;
+    const savingsRate = income > 0 ? Math.max(0, Math.min(1, (income - expenses) / income)) : 0;
+
+    const totalExpenses = (summary?.spendingByCategory ?? []).reduce(
+      (sum, cat) => sum + (cat.amount ?? 0),
+      0,
+    );
+    const fixedAmount = (summary?.spendingByCategory ?? [])
+      .filter(cat => ['subscriptions', 'fees_charges', 'housing:rent', 'housing:utilities'].includes(cat.category))
+      .reduce((sum, cat) => sum + (cat.amount ?? 0), 0);
+    const fixedShare = totalExpenses > 0 ? fixedAmount / totalExpenses : 0;
+
+    return [
+      {
+        id: 'balance',
+        label: 'Aktueller Kontostand',
+        value: formatCurrency(balance),
+        hint: 'Inkl. aller importierten Buchungen',
+      },
+      {
+        id: 'income',
+        label: `Einnahmen (${dashboard.selectedPeriodOption.label})`,
+        value: formatCurrency(income),
+      },
+      {
+        id: 'expenses',
+        label: `Ausgaben (${dashboard.selectedPeriodOption.label})`,
+        value: formatCurrency(expenses),
+      },
+      {
+        id: 'savings',
+        label: 'Sparquote',
+        value: formatPercent(savingsRate),
+        hint:
+          income > 0
+            ? `Ø ${(income - expenses > 0 ? formatCurrency(income - expenses) : formatCurrency(0))} zurückgelegt`
+            : 'Noch nicht genügend Daten',
+      },
+      {
+        id: 'fixed',
+        label: 'Fixkosten-Anteil',
+        value: formatPercent(fixedShare),
+        hint: `${formatCurrency(fixedAmount)} deiner Ausgaben sind wiederkehrend.`,
+      },
+    ];
+  }, [summary, dashboard.selectedPeriodOption.label]);
+
+  const categorySlices = useMemo(
+    () =>
+      (summary?.spendingByCategory ?? []).map(item => ({
+        id: item.category,
+        label: item.label || item.category,
+        total: item.amount,
+      })),
+    [summary?.spendingByCategory],
+  );
+
+  const insights = useMemo(() => {
+    if (!summary?.spendingByCategory?.length) return [];
+    const sorted = [...summary.spendingByCategory].sort((a, b) => b.amount - a.amount);
+    const top = sorted[0];
+    if (!top || top.amount <= 0) return [];
+    const total = sorted.reduce((sum, item) => sum + item.amount, 0);
+    const share = total > 0 ? top.amount / total : 0;
+    return [
+      {
+        title: `Top-Kategorie: ${top.label ?? top.category}`,
+        description: `${formatCurrency(top.amount)} · ${formatPercent(share)} deiner Ausgaben im aktuellen Zeitraum.`,
+      },
+    ];
+  }, [summary?.spendingByCategory]);
+
+  const reviewCounts = useMemo(() => {
+    const lowConfidence = dashboard.recent.filter(tx => (tx.categoryConfidence ?? 1) < 0.5).length;
+    return {
+      uncategorized: summary?.uncategorizedCount ?? 0,
+      lowConfidence,
     };
-    load();
-    const onUpdate = () => load();
-    window.addEventListener('nimbus:data-updated', onUpdate);
-    return () => {
-      cancelled = true;
-      window.removeEventListener('nimbus:data-updated', onUpdate);
-    };
-  }, []);
+  }, [dashboard.recent, summary?.uncategorizedCount]);
 
-  const fmt = (cents: number) => `${(cents / 100).toLocaleString('de-DE', { minimumFractionDigits: 2 })} €`;
-
-  const donutData = cats
-    .filter(c => c.category && c.category !== 'Income')
-    .map(c => ({ name: c.category || 'Other', value: Math.abs(c.amountCents) }))
-    .filter(d => d.value > 0);
-
-  const income6M = monthly.reduce((a, b) => a + (b.incomeCents || 0), 0);
-  const expense6M = monthly.reduce((a, b) => a + (b.expenseCents || 0), 0);
-
-  if (loading) {
+  if (dashboard.uiState === 'empty') {
     return (
-      <div className="mx-auto max-w-7xl p-4 md:p-8 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[1, 2, 3].map(i => (
-            <Card key={i}>
-              <CardBody>
-                <div className="animate-pulse space-y-2">
-                  <div className="h-4 w-24 bg-slate-200 rounded"></div>
-                  <div className="h-8 w-32 bg-slate-200 rounded"></div>
-                </div>
-              </CardBody>
-            </Card>
-          ))}
+      <AppShell>
+        <div className="flex flex-col gap-8">
+          <DashboardEmptyState
+            onImported={dashboard.refetch}
+            onNavigateToImports={() => navigate('/imports')}
+          />
         </div>
-      </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="mx-auto max-w-7xl p-4 md:p-8 space-y-6">
-      {/* KPI Row */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardBody>
-            <Stat label="Saldo gesamt" value={fmt(balance.balanceCents)} />
-          </CardBody>
-        </Card>
-        <Card>
-          <CardBody>
-            <Stat label="Einnahmen (6M)" value={fmt(income6M)} />
-          </CardBody>
-        </Card>
-        <Card>
-          <CardBody>
-            <Stat label="Ausgaben (6M)" value={fmt(expense6M)} />
-          </CardBody>
-        </Card>
-      </div>
+    <AppShell>
+      <div className="flex flex-col gap-6">
+        <DashboardHeader
+          userName={null}
+          subtitle={headerSubtitle}
+          accounts={dashboard.accounts}
+          selectedAccount={dashboard.selectedAccount}
+          onSelectAccount={dashboard.setSelectedAccount}
+          periodOptions={dashboard.periodOptions}
+          selectedPeriod={dashboard.selectedPeriodOption}
+          onSelectPeriod={dashboard.setSelectedPeriod}
+          hasWarnings={dashboard.hasParserWarnings}
+          warningsCount={dashboard.warningsCount}
+          onWarningsClick={() => navigate('/imports')}
+          onUploadClick={() => navigate('/imports')}
+        />
 
-      {/* Charts Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <CardBody>
-            <div className="mb-3 text-slate-700 font-medium">Monatsüberblick (6M)</div>
-            {monthly.length === 0 ? (
-              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">Keine Daten verfügbar.</div>
-            ) : (
-              <MonthBars data={monthly} />
-            )}
-          </CardBody>
-        </Card>
-        <Card>
-          <CardBody>
-            <div className="mb-3 text-slate-700 font-medium">Ausgaben nach Kategorien</div>
-            {donutData.length === 0 ? (
-              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">Keine Daten verfügbar.</div>
-            ) : (
-              <Donut data={donutData} />
-            )}
-          </CardBody>
-        </Card>
-      </div>
+        {dashboard.error ? (
+          <div className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
+            {dashboard.error}
+          </div>
+        ) : null}
 
-      {/* Recent */}
-      <Card>
-        <CardBody>
-          <div className="mb-4 text-slate-700 font-medium">Letzte Buchungen</div>
-          <ul className="divide-y divide-slate-100">
-            {recent.length === 0 ? (
-              <li className="py-6 text-slate-400">Keine Daten. — lade eine CSV hoch!</li>
-            ) : (
-              recent.map(tx => (
-                <li key={tx.id} className="py-3 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <div className="text-slate-900">{tx.purpose || '—'}</div>
-                    <div className="text-sm text-slate-500">{tx.bookingDate ? new Date(tx.bookingDate).toLocaleDateString('de-DE') : '—'}</div>
-                  </div>
-                  <div className={`font-medium tabular-nums ${(tx.amountCents ?? 0) < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                    {fmt(tx.amountCents ?? 0)}
-                  </div>
-                </li>
-              ))
-            )}
-          </ul>
-        </CardBody>
-      </Card>
-    </div>
+        {dashboard.uiState === 'early' ? (
+          <div className="rounded-3xl border border-indigo-200 bg-indigo-50 px-5 py-4 text-xs text-indigo-700 shadow-sm dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-200">
+            Importiere weitere Konten, um ein vollständiges Bild zu erhalten. Jede CSV verbessert deine Analysen.
+          </div>
+        ) : null}
+
+        <DashboardKpiRow kpis={kpiData} loading={dashboard.loading} />
+
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <DashboardBalanceChart
+            balance={summary?.balanceOverTime ?? []}
+            cashflow={summary?.cashflowByMonth ?? []}
+            loading={dashboard.loading}
+          />
+          <DashboardCategoryPanel data={categorySlices} loading={dashboard.loading} />
+        </div>
+
+        <DashboardTiles
+          subscriptions={summary?.subscriptions ?? []}
+          review={reviewCounts}
+          dataQuality={{
+            lastImport: summary?.lastImport,
+            warningsCount: dashboard.warningsCount,
+            importsCount: dashboard.importsCount,
+          }}
+          insights={insights}
+          onOpenSubscriptions={() => navigate('/transactions')}
+          onOpenReview={() => navigate('/transactions')}
+          onOpenImports={() => navigate('/imports')}
+        />
+
+        <InsightsRow
+          subscriptions={summary?.subscriptions ?? []}
+          taxHints={summary?.potentialTaxRelevant ?? []}
+          cashflowByMonth={summary?.cashflowByMonth ?? []}
+          uncategorizedCount={summary?.uncategorizedCount ?? 0}
+        />
+
+        <EngagementStrip
+          achievements={dashboard.achievements}
+          subscriptions={summary?.subscriptions ?? []}
+          cashflowByMonth={summary?.cashflowByMonth ?? []}
+          currentBalance={summary?.kpis.currentBalance ?? 0}
+        />
+
+        <RecentActivityMini transactions={dashboard.recent} loading={dashboard.loading && !dashboard.recent.length} />
+      </div>
+    </AppShell>
   );
-}
+};
+
+export default Dashboard;
+

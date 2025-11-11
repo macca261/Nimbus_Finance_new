@@ -69,7 +69,7 @@ export async function getTransactions(params: { limit?: number } = {}) {
   const q = new URLSearchParams(); if (params.limit) q.set('limit', String(params.limit));
   const r = await fetch(`/api/transactions?${q.toString()}`);
   const j = await r.json().catch(() => ({ data: [] }));
-  return (j?.data ?? []) as import('@/types/tx').Tx[];
+  return (j?.data ?? []) as any[];
 }
 
 export const apiDev = {

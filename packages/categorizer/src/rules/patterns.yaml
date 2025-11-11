@@ -1,0 +1,73 @@
+# Category patterns in precedence order (first match wins)
+Income:
+  - pattern: "(gehalt|lohn|besoldung|rentenzahlung|steuerrückzahlung|dividende)"
+    reason: "income pattern"
+
+Groceries:
+  - pattern: "(supermarkt|lebensmittel|einkauf.*lebensmittel|bäckerei|metzgerei|obst|gemüse)"
+    reason: "groceries pattern"
+
+Dining:
+  - pattern: "(restaurant|café|cafe|bäckerei.*frühstück|imbiss|fast.?food|pizzeria|döner|kebab)"
+    reason: "dining pattern"
+
+Transport:
+  - pattern: "(tankstelle|benzin|diesel|kraftstoff|ticket|fahrkarte|bahn|zug|bus|ubahn|sbahn|taxi|mietwagen)"
+    reason: "transport pattern"
+
+Housing:
+  - pattern: "(miete|mietzins|hausgeld|nebenkosten|hausverwaltung|immobilien|wohngeld)"
+    reason: "housing pattern"
+
+Utilities:
+  - pattern: "(strom|gas|wasser|heizung|telefon|internet|mobilfunk|vertrag|gebühr.*telekom)"
+    reason: "utilities pattern"
+
+Health:
+  - pattern: "(apotheke|arzt|zahnarzt|krankenhaus|krankenversicherung|medikament|rezept)"
+    reason: "health pattern"
+
+Subscriptions:
+  - pattern: "(abo|subscription|mitgliedschaft|beitrag.*verein|spenden)"
+    reason: "subscriptions pattern"
+
+Shopping:
+  - pattern: "(online.*shop|versand|bestellung|waren|kauf|einkauf)"
+    reason: "shopping pattern"
+
+Education:
+  - pattern: "(schule|universität|studium|seminar|kurs|bildung|bücher|buchhandlung)"
+    reason: "education pattern"
+
+Entertainment:
+  - pattern: "(kino|theater|konzert|musik|spiel|spiele|event|veranstaltung)"
+    reason: "entertainment pattern"
+
+Fees:
+  - pattern: "(gebühr|entgelt|bearbeitungsgebühr|kartengebühr|kontoführungsgebühr|spesen)"
+    reason: "fees pattern"
+
+Insurance:
+  - pattern: "(versicherung|prämie|beitrag.*versicherung|krankenversicherung|haftpflicht|kasko)"
+    reason: "insurance pattern"
+
+Taxes:
+  - pattern: "(steuer|finanzamt|steuerberater|steuerbescheid|vorauszahlung)"
+    reason: "taxes pattern"
+
+Travel:
+  - pattern: "(hotel|reise|flug|flughafen|reisebüro|urlaub|ferien|booking|airbnb)"
+    reason: "travel pattern"
+
+Gifts:
+  - pattern: "(geschenk|spende|spenden|spendenaktion)"
+    reason: "gifts pattern"
+
+Savings:
+  - pattern: "(sparen|sparbuch|depot|anlage|investment|fonds|sparplan)"
+    reason: "savings pattern"
+
+Transfers:
+  - pattern: "(überweisung|dauerauftrag|lastschrift|transfer|gutschrift|auftrag)"
+    reason: "transfers pattern"
+

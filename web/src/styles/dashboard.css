@@ -1,0 +1,77 @@
+/* Layout frame (sidebar + main) */
+.nimbus-shell {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  min-height: 100%;
+}
+
+/* Sidebar */
+.nimbus-nav {
+  background: var(--surface);
+  border-right: 1px solid var(--ring);
+  padding: 20px 16px;
+}
+.nimbus-brand {
+  font-weight: 700;
+  letter-spacing: .2px;
+  margin-bottom: 16px;
+}
+.nimbus-menu {
+  display: grid;
+  gap: 6px;
+}
+.nimbus-menu a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: var(--text);
+  text-decoration: none;
+}
+.nimbus-menu a.active,
+.nimbus-menu a:hover {
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+}
+
+/* Topbar */
+.nimbus-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  position: sticky;
+  top: 0;
+  backdrop-filter: saturate(1.2) blur(6px);
+  background: color-mix(in oklab, var(--bg) 82%, transparent);
+  border-bottom: 1px solid var(--ring);
+}
+
+/* Main content */
+.nimbus-main {
+  padding: 20px;
+}
+
+/* Small utility button */
+.btn {
+  border: 1px solid var(--ring);
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.btn:hover { border-color: color-mix(in oklab, var(--primary) 40%, var(--ring)); }
+
+/* Cards */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--ring);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+/* Simple grid helpers */
+.grid { display: grid; gap: 16px; }
+.grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1100px) { .grid.cols-3 { grid-template-columns: 1fr; } }

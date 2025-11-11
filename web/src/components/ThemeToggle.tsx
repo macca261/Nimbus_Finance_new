@@ -1,29 +1,43 @@
+import { Moon, Sun } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 export default function ThemeToggle() {
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    return (localStorage.getItem('theme') as 'light' | 'dark') || 'dark';
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    const stored = localStorage.getItem('nimbus.theme');
+    return stored === 'dark';
   });
 
   useEffect(() => {
-    // Initialize theme on mount
-    const savedTheme = (localStorage.getItem('theme') as 'light' | 'dark') || 'dark';
-    document.documentElement.setAttribute('data-theme', savedTheme);
-  }, []);
+    const root = document.documentElement;
+    if (isDark) {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('nimbus.theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
 
   useEffect(() => {
-    localStorage.setItem('theme', theme);
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+    // ensure light is default on first load
+    if (typeof window === 'undefined') return;
+    const stored = localStorage.getItem('nimbus.theme');
+    if (!stored) {
+      localStorage.setItem('nimbus.theme', 'light');
+      document.documentElement.classList.remove('dark');
+      setIsDark(false);
+    }
+  }, []);
 
   return (
     <button
-      className="px-3 py-1 rounded border text-sm"
-      onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-      aria-label="Toggle theme"
-      title="Toggle theme"
+      type="button"
+      onClick={() => setIsDark(v => !v)}
+      className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-white"
+      aria-label={`Wechsle zu ${isDark ? 'Light' : 'Dark'} Mode`}
     >
-      {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+      {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+      <span>{isDark ? 'Dark' : 'Light'}</span>
     </button>
   );
 }

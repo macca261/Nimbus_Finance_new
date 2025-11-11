@@ -1,0 +1,5 @@
+Buchungsdatum;Vorgang;Verwendungszweck;Betrag
+01.03.2025;Gutschrift;GEHALT ACME GMBH;3000,00
+02.03.2025;Lastschrift;REWE MARKT 123 BERLIN;-31,24
+03.03.2025;Dauerauftrag;NETFLIX ABO;-12,99
+

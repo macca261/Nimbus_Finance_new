@@ -18,20 +18,20 @@ function seed(rows: InsertRow[]) {
 }
 
 const DATA_GOOD: InsertRow[] = [
-  { bookingDate: '2025-03-01', valueDate: '2025-03-01', amountCents: 300000, currency: 'EUR', purpose: 'GEHALT ACME GMBH', category: 'Income' },
-  { bookingDate: '2025-03-02', valueDate: '2025-03-02', amountCents: -5000, currency: 'EUR', purpose: 'REWE MARKT 123', category: 'Groceries' },
-  { bookingDate: '2025-03-03', valueDate: '2025-03-03', amountCents: -3000, currency: 'EUR', purpose: 'BVG MONATSKARTE', category: 'Transport' },
-  { bookingDate: '2025-03-04', valueDate: '2025-03-04', amountCents: -5000, currency: 'EUR', purpose: 'LIDL FILIALE 42', category: 'Groceries' },
-  { bookingDate: '2025-03-05', valueDate: '2025-03-05', amountCents: -4000, currency: 'EUR', purpose: 'DB REISEZENTRUM', category: 'Transport' },
-  { bookingDate: '2025-03-06', valueDate: '2025-03-06', amountCents: -2000, currency: 'EUR', purpose: 'ALDI SÜD 0815', category: 'Groceries' },
-  { bookingDate: '2025-03-07', valueDate: '2025-03-07', amountCents: -1000, currency: 'EUR', purpose: 'U-BHF BERLIN', category: 'Transport' },
+  { bookingDate: '2025-03-01', valueDate: '2025-03-01', amountCents: 300000, currency: 'EUR', purpose: 'GEHALT ACME GMBH', category: 'income_salary', direction: 'in' },
+  { bookingDate: '2025-03-02', valueDate: '2025-03-02', amountCents: -5000, currency: 'EUR', purpose: 'REWE MARKT 123', category: 'groceries', direction: 'out' },
+  { bookingDate: '2025-03-03', valueDate: '2025-03-03', amountCents: -3000, currency: 'EUR', purpose: 'BVG MONATSKARTE', category: 'transport', direction: 'out' },
+  { bookingDate: '2025-03-04', valueDate: '2025-03-04', amountCents: -5000, currency: 'EUR', purpose: 'LIDL FILIALE 42', category: 'groceries', direction: 'out' },
+  { bookingDate: '2025-03-05', valueDate: '2025-03-05', amountCents: -4000, currency: 'EUR', purpose: 'DB REISEZENTRUM', category: 'transport', direction: 'out' },
+  { bookingDate: '2025-03-06', valueDate: '2025-03-06', amountCents: -2000, currency: 'EUR', purpose: 'ALDI SÜD 0815', category: 'groceries', direction: 'out' },
+  { bookingDate: '2025-03-07', valueDate: '2025-03-07', amountCents: -1000, currency: 'EUR', purpose: 'U-BHF BERLIN', category: 'transport', direction: 'out' },
 ]
 
 const DATA_FAIL: InsertRow[] = [
-  { bookingDate: '2025-04-01', valueDate: '2025-04-01', amountCents: 30000, currency: 'EUR', purpose: 'Gehalt Probe GmbH', category: 'Income' },
-  { bookingDate: '2025-04-02', valueDate: '2025-04-02', amountCents: -15000, currency: 'EUR', purpose: 'REWE CITY 99', category: 'Groceries' },
-  { bookingDate: '2025-04-03', valueDate: '2025-04-03', amountCents: -5000, currency: 'EUR', purpose: 'KONTOR GEBÜHR', category: 'Fees' },
-  { bookingDate: '2025-04-05', valueDate: '2025-04-05', amountCents: -10000, currency: 'EUR', purpose: 'WEEKEND FOOD', category: 'Groceries' },
+  { bookingDate: '2025-04-01', valueDate: '2025-04-01', amountCents: 30000, currency: 'EUR', purpose: 'Gehalt Probe GmbH', category: 'income_salary', direction: 'in' },
+  { bookingDate: '2025-04-02', valueDate: '2025-04-02', amountCents: -15000, currency: 'EUR', purpose: 'REWE CITY 99', category: 'groceries', direction: 'out' },
+  { bookingDate: '2025-04-03', valueDate: '2025-04-03', amountCents: -5000, currency: 'EUR', purpose: 'KONTOR GEBÜHR', category: 'fees_charges', direction: 'out' },
+  { bookingDate: '2025-04-05', valueDate: '2025-04-05', amountCents: -10000, currency: 'EUR', purpose: 'WEEKEND FOOD', category: 'groceries', direction: 'out' },
 ]
 
 describe('GET /api/achievements', () => {
@@ -61,7 +61,7 @@ describe('GET /api/achievements', () => {
 
     expect(saver.achieved).toBe(true)
     expect(saver.progress).toBe(100)
-    expect(saver.current).toBeCloseTo(2790, 2)
+    expect(saver.current).toBeCloseTo(2800, 2)
     expect(saver.target).toBe(500)
 
     expect(groceries.achieved).toBe(true)

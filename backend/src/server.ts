@@ -2,12 +2,18 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import dotenv from 'dotenv';
-import { db as defaultDb, insertTransactions, getBalance, getRecentTransactions, clearAll, openDb, initDb, ensureSchema, prepareDb, replaceDb, dbPath } from './db';
+import { db as defaultDb, insertTransactions, getBalance, clearAll, openDb, initDb, ensureSchema, prepareDb, replaceDb, dbPath } from './db';
 import { insertManyTransactions, type InsertRow } from './insert';
 import { evaluateAll } from './services/achievements';
 import summaryRouter from './routes/summary';
-import { inferCategory } from './categorize';
+import { categorize } from './categorization';
 import achievementsRouter from './routes/achievements';
+import { importRouter } from './routes/import';
+import { paypalRouter } from './routes/paypal';
+import { overridesRouter } from './routes/overrides';
+import { transactionsRouter } from './routes/transactions';
+import dashboardRouter from './routes/dashboard';
+import devResetRouter from './routes/dev-reset';
 import os from 'node:os';
 import fs from 'node:fs';
 import { decodeCsvBuffer } from './lib/text';
@@ -150,15 +156,34 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+  app.use(express.text({ type: ['text/csv', 'text/plain'], limit: '20mb' }));
 
-// Summary router
+  // Health endpoint (mount early)
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  // Summary router
   app.use('/api/summary', summaryRouter);
   app.use('/api/achievements', achievementsRouter);
+  app.use('/api/import', importRouter);
+  app.use('/api/paypal', paypalRouter);
+  app.use('/api/overrides', overridesRouter);
+  app.use('/api/transactions', transactionsRouter);
+  app.use('/api/dashboard', dashboardRouter);
+  if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
+    app.use('/api', devResetRouter);
+    console.log('Mounted: /api/dev/reset (development)');
+  }
+  console.log('Mounted: /api/health');
   console.log('Mounted: /api/summary/*');
   console.log('Mounted: /api/achievements');
+  console.log('Mounted: /api/import');
+  console.log('Mounted: /api/transactions');
+  console.log('Mounted: /api/dashboard');
 
-// Health
-  app.get('/api/health', (req, res) => {
+  // Extended health endpoint (keep for compatibility)
+  app.get('/api/health-extended', (req, res) => {
   try {
     const version = '0.1.0';
     const db = (req.app as any).locals.db;
@@ -254,17 +279,43 @@ const upload = multer({
           amountCents: r.amountCents,
           currency: r.currency ?? 'EUR',
           purpose: r.purpose || '',
+          direction: r.amountCents >= 0 ? 'in' : 'out',
           counterpartName: r.counterpartName ?? null,
           accountIban: r.accountIban ?? null,
           rawCode: r.rawCode ?? null,
+          raw: r as unknown as Record<string, unknown>,
+          importFile: req.file?.originalname ?? 'upload.csv',
           category: null,
         };
-        const category = inferCategory({
-          purpose: normalized.purpose,
-          counterpartName: normalized.counterpartName ?? undefined,
-          rawCode: normalized.rawCode ?? undefined,
+        const textParts = [
+          normalized.purpose,
+          normalized.counterpartName ?? undefined,
+          normalized.accountIban ?? undefined,
+        ].filter((value): value is string => Boolean(value && value.toString().trim()));
+        const categoryResult = categorize({
+          text: textParts.join(' '),
+          amount: normalized.amountCents / 100,
+          amountCents: normalized.amountCents,
+          iban: normalized.accountIban ?? null,
+          counterpart: normalized.counterpartName ?? null,
+          memo: normalized.purpose,
+          payee: normalized.counterpartName ?? null,
+          source: 'csv_bank',
         });
-        normalized.category = category;
+        normalized.category = categoryResult.category;
+        normalized.categorySource = categoryResult.source;
+        normalized.categoryConfidence = categoryResult.confidence;
+        normalized.categoryExplanation = categoryResult.explanation ?? null;
+        normalized.categoryRuleId = categoryResult.ruleId ?? null;
+        if (categoryResult.confidence < 0.5) {
+          try {
+            console.debug?.('categorize:low', {
+              category: categoryResult.category,
+              confidence: categoryResult.confidence,
+              explanation: categoryResult.explanation,
+            });
+          } catch {}
+        }
         return normalized;
       });
 
@@ -327,13 +378,6 @@ app.get('/api/summary/month', (req, res) => {
   const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   res.json({ month: ym, incomeCents: row.incomeCents, expenseCents: row.expenseCents });
 });
-
-// Transactions
-  app.get('/api/transactions', (req, res) => {
-  const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10));
-  const rows = getRecentTransactions(limit, (req.app as any).locals.db);
-    res.json({ data: rows });
-  });
 
   app.get('/api/transactions.csv', (req, res) => {
     const rawLimit = Number.parseInt(String(req.query.limit ?? '1000'), 10);
@@ -629,18 +673,82 @@ if (process.env.DEV_SEED === 'true') {
   } catch {}
 }
 
+  // AI Ask endpoint (stub)
+  app.post('/api/ai/ask', (req, res) => {
+    try {
+      const { query } = req.body;
+      if (!query || typeof query !== 'string') {
+        return res.status(400).json({ error: 'query required' });
+      }
+      // Stub response for now
+      const responses = [
+        `Based on your query "${query}", I can help you analyze your finances. This is a stub response.`,
+        `I understand you're asking about "${query}". Once the AI integration is complete, I'll provide detailed insights.`,
+        `Your question about "${query}" is noted. AI features are coming soon!`,
+      ];
+      const response = responses[Math.floor(Math.random() * responses.length)];
+      res.json({ response });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'AI service error' });
+    }
+  });
+
   // 404
   app.use((_req, res) => res.status(404).json({ code: 'NOT_FOUND', message: 'Route not found' }));
   return app;
 }
 
+export const app = createApp();
+
 if (require.main === module) {
-  const app = createApp();
-  app.listen(PORT, () => {
-    console.log(`API listening on http://localhost:${PORT}`);
-  });
+  // Port fallback: try PORT, then find next available port
+  function findAvailablePort(startPort: number, maxAttempts = 10): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const net = require('net');
+      let port = startPort;
+      let attempts = 0;
+      
+      function tryPort() {
+        if (attempts >= maxAttempts) {
+          reject(new Error(`Could not find available port after ${maxAttempts} attempts`));
+          return;
+        }
+        
+        const server = net.createServer();
+        
+        server.once('error', (err: any) => {
+          if (err.code === 'EADDRINUSE') {
+            attempts++;
+            port++;
+            tryPort();
+          } else {
+            reject(err);
+          }
+        });
+        
+        server.listen(port, () => {
+          server.close(() => {
+            resolve(port);
+          });
+        });
+      }
+      
+      tryPort();
+    });
+  }
+  
+  // Start server with port fallback
+  (async () => {
+    try {
+      const targetPort = await findAvailablePort(PORT);
+      app.listen(targetPort, () => {
+        console.log(`API listening on http://localhost:${targetPort}`);
+      });
+    } catch (err: any) {
+      console.error('Failed to start server:', err.message);
+      process.exit(1);
+    }
+  })();
 }
 
-export default createApp;
-
-
+export default app;

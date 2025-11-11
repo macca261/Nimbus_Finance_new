@@ -5,11 +5,16 @@
   "workspaces": [
     "backend",
     "web",
-    "packages/parser-de"
+    "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web -c green,cyan \"npm -w backend run dev\" \"npm -w web run dev\"",
-    "build": "npm -w packages/parser-de run build && npm -w backend run build && npm -w web run build",
+    "dev": "npx npm-run-all -p api web",
+    "api": "npm -w backend run dev",
+    "web": "npm -w web run dev",
+    "build": "npm -w backend run build && npm -w web run build",
+    "lint": "eslint \"backend/src/**/*.{ts,tsx}\" \"web/src/**/*.{ts,tsx}\"",
+    "lint:fix": "eslint \"backend/src/**/*.{ts,tsx}\" \"web/src/**/*.{ts,tsx}\" --fix",
+    "format": "prettier \"**/*.{ts,tsx,js,json,md,yml,yaml,css,scss,html}\" --write",
     "smoke:dup": "curl -s -F \"file=@packages/parser-de/src/fixtures/generic_de.csv\" http://localhost:4000/api/imports/csv && curl -s -F \"file=@packages/parser-de/src/fixtures/generic_de.csv\" http://localhost:4000/api/imports/csv",
     "smoke:commerz": "curl -s -F \"file=@packages/parser-de/src/fixtures/commerzbank_sample.csv\" http://localhost:4000/api/imports/csv",
     "smoke:sparkasse": "curl -s -F \"file=@packages/parser-de/src/fixtures/sparkasse_sample.csv\" http://localhost:4000/api/imports/csv",
@@ -18,15 +23,28 @@
     "dev:reset": "powershell -Command \"Remove-Item -Force -ErrorAction SilentlyContinue .\\backend\\data\\dev.db\" && npm run dev",
     "fmt": "prettier --write .",
     "fmt:check": "prettier --check .",
-    "lint": "eslint . --max-warnings=0",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run",
+    "test": "npm -w backend run test",
     "ci": "npm run fmt:check && npm run lint && npm run typecheck && npm run test"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,json,md,yml,yaml,css,scss,html}": [
+      "eslint --fix",
+      "prettier --write"
+    ]
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
-    "concurrently": "^8.2.2",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/": "^8.0.0",
+    "concurrently": "^9.0.0",
+    "cross-env": "^10.1.0",
     "eslint": "^9.39.1",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-import": "^2.29.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "npm-run-all": "^4.1.5",
     "prettier": "^3.6.2",
     "typescript": "^5.9.3",
     "vitest": "^4.0.7"

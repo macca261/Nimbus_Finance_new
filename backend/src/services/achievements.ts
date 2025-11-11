@@ -58,10 +58,9 @@ export async function evaluateAll(_opts?: { now?: Date }): Promise<void> {
     const gro = db.prepare(`
       SELECT ABS(COALESCE(SUM(amountCents),0)) AS spend
       FROM transactions 
-      WHERE amountCents<0 AND strftime('%Y-%m', bookingDate)=? AND (
-        UPPER(purpose) LIKE '%REWE%' OR UPPER(purpose) LIKE '%ALDI%' OR UPPER(purpose) LIKE '%LIDL%' OR UPPER(purpose) LIKE '%EDEKA%' OR
-        UPPER(category) LIKE '%GROC%'
-      )
+      WHERE amountCents < 0
+        AND strftime('%Y-%m', bookingDate) = ?
+        AND COALESCE(TRIM(category), '') IN ('groceries')
     `).get(ym) as { spend: number };
     const spend = gro?.spend ?? 0;
     if (spend < 20000) upsertUser('CATEGORY_MASTER_GROCERIES', new Date().toISOString(), 100);
@@ -71,9 +70,9 @@ export async function evaluateAll(_opts?: { now?: Date }): Promise<void> {
     const fees = db.prepare(`
       SELECT ABS(COALESCE(SUM(amountCents),0)) AS fees
       FROM transactions
-      WHERE amountCents<0 AND strftime('%Y-%m', bookingDate)=? AND (
-        UPPER(purpose) LIKE '%GEBÜHR%' OR UPPER(purpose) LIKE '%ENTGELT%' OR UPPER(category) LIKE '%FEE%'
-      )
+      WHERE amountCents < 0
+        AND strftime('%Y-%m', bookingDate) = ?
+        AND COALESCE(TRIM(category), '') IN ('fees_charges')
     `).get(ym) as { fees: number };
     if ((fees?.fees ?? 0) === 0) upsertUser('ZERO_FEES_MONTH', new Date().toISOString(), 100); else upsertUser('ZERO_FEES_MONTH', null, 0);
   } else {

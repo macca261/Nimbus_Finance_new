@@ -26,11 +26,10 @@ describe('Comdirect import', () => {
     const pre = await request(app).get('/api/summary/balance')
     const preCents = (pre.body?.data || pre.body)?.balanceCents ?? 0
     const buf = loadFixtureBuffer('comdirect_min.csv', INLINE_MIN)
-    const res = await request(app).post('/api/imports/csv').attach('file', buf, 'comdirect_min.csv')
+    const res = await request(app).post('/api/import').attach('file', buf, 'comdirect_min.csv')
     expect(res.status).toBe(200)
-    const data = res.body?.data || res.body
-    expect(data.adapterId).toBeDefined()
-    expect(data.imported).toBeGreaterThan(0)
+    expect(res.body?.ok).toBe(true)
+    expect(res.body?.transactionCount).toBeGreaterThan(0)
 
     const bal = await request(app).get('/api/summary/balance')
     const postCents = (bal.body?.data || bal.body)?.balanceCents ?? 0
@@ -41,15 +40,18 @@ describe('Comdirect import', () => {
     const cnt = (stats.body?.data || stats.body)?.count ?? 0
     expect(cnt).toBeGreaterThan(0)
 
-    const tx = await request(app).get('/api/transactions?limit=5')
+    const tx = await request(app).get('/api/transactions/recent?limit=5')
     expect(tx.status).toBe(200)
-    const list = tx.body?.data || tx.body
+    const list = (tx.body?.transactions ?? tx.body?.data ?? []) as any[]
     expect(Array.isArray(list)).toBe(true)
     expect(list.length).toBeGreaterThan(0)
     const purposes = list.map((t: any) => String(t.purpose || '')).join(' \n ')
     expect(purposes).toMatch(/GEHALT ACME/i)
     expect(purposes).toMatch(/REWE/i)
     expect(purposes).toMatch(/KARTENENTGELT/i)
+    expect(list.some((t: any) => t.category === 'income_salary')).toBe(true)
+    expect(list.some((t: any) => t.category === 'groceries')).toBe(true)
+    expect(list.some((t: any) => t.category === 'fees_charges')).toBe(true)
   })
 
   it('imports real file if present (smoke)', async () => {
@@ -57,10 +59,10 @@ describe('Comdirect import', () => {
     if (!exists(real)) return
     
     const buf = fs.readFileSync(real)
-    const res = await request(app).post('/api/imports/csv').attach('file', buf, 'comdirect_real.csv')
+    const res = await request(app).post('/api/import').attach('file', buf, 'comdirect_real.csv')
     expect(res.status).toBe(200)
-    const data = res.body?.data || res.body
-    expect(data.imported).toBeGreaterThan(0)
+    expect(res.body?.ok).toBe(true)
+    expect(res.body?.transactionCount).toBeGreaterThan(0)
   })
 })
 

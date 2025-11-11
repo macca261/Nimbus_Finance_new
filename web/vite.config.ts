@@ -3,6 +3,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -12,15 +14,12 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    host: true,
     hmr: { overlay: false },
     proxy: {
-      '/api': {
-        target: 'http://localhost:4000',
-        changeOrigin: true,
-        secure: false
-      }
-    }
-  }
+      '/api': 'http://localhost:4000',
+    },
+  },
 });
 
 

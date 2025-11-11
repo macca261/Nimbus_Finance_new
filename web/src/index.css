@@ -1,21 +1,38 @@
-html,body,#root { height:100%; margin:0; }
-:root {
-  --surface-muted: #f1f5f9;
-  --surface-success: #ecfdf5;
-  --surface-info: #eff6ff;
-  --surface-warn: #fff7ed;
-  --ring-success: #16a34a;
-  --ring-info: #2563eb;
-  --ring-warn: #f97316;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --tooltip-bg: #ffffff;
+    --tooltip-border: rgba(148, 163, 184, 0.4);
+    --tooltip-text: #0f172a;
+    --tooltip-muted: #475569;
+    --axis-color: #475569;
+  }
+
+  .dark {
+    color-scheme: dark;
+    --tooltip-bg: #0f172a;
+    --tooltip-border: rgba(71, 85, 105, 0.6);
+    --tooltip-text: #e2e8f0;
+    --tooltip-muted: #94a3b8;
+    --axis-color: #94a3b8;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+  }
+
+  .dark body {
+    @apply bg-slate-950 text-slate-50;
+  }
 }
-* { box-sizing: border-box; }
-body {
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-variant-numeric: tabular-nums;
-  background-color: #f8fafc;
-  color: #0f172a;
+
+/* smooth transitions for theme */
+* {
+  transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease;
 }
-a { color: #5B6BFF; text-decoration: none; }
-a:hover { text-decoration: underline; }
 
 

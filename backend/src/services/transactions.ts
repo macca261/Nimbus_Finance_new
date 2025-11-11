@@ -1,3 +1,3 @@
-export { upsertTransactions } from '../db/sqlite';
+export { insertTransactions as upsertTransactions } from '../db';
 
 

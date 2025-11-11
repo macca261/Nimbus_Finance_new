@@ -1,24 +1,85 @@
-/* web/src/styles/theme.css (import this globally) */
+/* Light/Dark theme tokens - calm, bright colors */
 :root {
-  --bg: #0b0d11;
-  --panel: #12151b;
-  --text: #e6e7ea;
-  --muted: #a7b1c2;
-  --accent: #6c8cff;
-  --border: #1e2430;
+  /* Dark theme (default) */
+  --bg: #0f172a;
+  --bg-secondary: #1e293b;
+  --surface: #1e293b;
+  --surface-hover: #334155;
+  --text: #f1f5f9;
+  --text-muted: #94a3b8;
+  --border: #334155;
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --ring: #475569;
+  --success: #10b981;
+  --error: #ef4444;
+  --warning: #f59e0b;
 }
 
-:root[data-theme='light'] {
-  --bg: #f7f9fc;
-  --panel: #ffffff;
-  --text: #0c1020;
-  --muted: #4b5563;
-  --accent: #2a5af9;
-  --border: #e6e8ee;
+:root[data-theme="light"] {
+  /* Light theme - calm and bright */
+  --bg: #f8fafc;
+  --bg-secondary: #f1f5f9;
+  --surface: #ffffff;
+  --surface-hover: #f1f5f9;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --border: #e2e8f0;
+  --primary: #4f46e5;
+  --primary-hover: #6366f1;
+  --ring: #cbd5e1;
+  --success: #059669;
+  --error: #dc2626;
+  --warning: #d97706;
 }
 
-html, body, #root {
+html,
+body,
+#root {
   height: 100%;
+  margin: 0;
+}
+
+body {
   background: var(--bg);
   color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Utility classes */
+.bg-surface {
+  background-color: var(--surface);
+}
+
+.bg-secondary {
+  background-color: var(--bg-secondary);
+}
+
+.text-primary {
+  color: var(--primary);
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+.border-default {
+  border-color: var(--border);
+}
+
+.bg-surface-hover {
+  background-color: var(--surface-hover);
+}
+
+.bg-primary {
+  background-color: var(--primary);
+}
+
+.bg-primary-hover:hover {
+  background-color: var(--primary-hover);
 }

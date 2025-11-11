@@ -22,32 +22,36 @@ export default function UploadCSV() {
     timeoutRef.current = window.setTimeout(() => setToast(null), 5000)
   }
 
-  async function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onFileChange(e: React.ChangeEvent<HTMLInputElement>, bank?: string) {
     const f = e.target.files?.[0]
     if (!f) return
     const fd = new FormData()
-    fd.append('file', f)
+    fd.append('file', f) // Field name must be "file"
     setMsg('Lade hoch…')
     setLastSuccess(null)
     try {
-      const res = await fetch('/api/imports/csv', { method:'POST', body: fd })
+      const qs = bank ? `?bank=${encodeURIComponent(bank)}` : ''
+      const res = await fetch(`/api/import${qs}`, { method:'POST', body: fd })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) {
         const body = json || {};
         const message = body?.error || body?.message || res.statusText || 'Upload fehlgeschlagen';
-        setMsg(message);
+        const hint = body?.hint;
+        const preview = body?.preview;
+        const fullMessage = hint ? `${message}. ${hint}` : message;
+        setMsg(preview ? `${fullMessage}\n\nPreview:\n${preview}` : fullMessage);
         if (body?._debug || body?.reason) {
           console.warn('[import:error]', body);
         }
-        showToast({ type: 'error', message });
+        showToast({ type: 'error', message: fullMessage });
         return;
       }
       const body = json || {};
       const data = body?.data || body;
-      const imported = data?.imported ?? data?.rows?.length ?? 0;
+      const imported = data?.count ?? data?.imported ?? data?.rows?.length ?? 0;
       const duplicates = data?.duplicates ?? 0;
-      const adapterId = data?.adapterId ?? 'unbekannt';
-      const successMsg = `Import erfolgreich – ${imported} Buchungen gespeichert, ${duplicates} Duplikate übersprungen.`;
+      const adapterId = data?.bank ?? data?.adapterId ?? 'unbekannt';
+      const successMsg = `Import erfolgreich – ${imported} Buchungen importiert.`;
       setMsg(successMsg);
       setLastSuccess({ adapterId, imported, duplicates });
       showToast({ type: 'success', message: successMsg });

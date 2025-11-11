@@ -4,31 +4,35 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview --port 5173",
+    "dev": "node ../node_modules/vite/bin/vite.js --host",
+    "build": "node ../node_modules/vite/bin/vite.js build",
+    "preview": "node ../node_modules/vite/bin/vite.js preview --port 5173",
     "test": "vitest run"
   },
   "dependencies": {
+    "@nimbus/categorizer": "file:../packages/categorizer",
     "axios": "^1.7.2",
+    "framer-motion": "^12.23.24",
     "lucide-react": "^0.468.0",
-    "recharts": "^2.12.7",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-dropzone": "^14.3.5",
     "react-router-dom": "^6.26.1",
-    "react-dropzone": "^14.3.5"
+    "recharts": "^2.15.4",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
-    "@types/react": "^18.2.79",
-    "@types/react-dom": "^18.2.25",
-    "@vitejs/plugin-react": "^4.3.1",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.47",
-    "tailwindcss": "^3.4.13",
-    "typescript": "^5.4.5",
-    "vite": "^5.4.1",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.4.21",
+    "class-variance-authority": "^0.7.1",
+    "postcss": "^8.5.6",
+    "tailwind-merge": "^3.3.1",
+    "tailwindcss": "^3.4.18",
+    "tailwindcss-animate": "^1.0.7",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.21",
     "vitest": "^2.1.1"
   }
 }
-
-

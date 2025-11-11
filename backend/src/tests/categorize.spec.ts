@@ -1,47 +1,119 @@
 import { describe, it, expect } from 'vitest';
-import { inferCategory, type NormalizedTx } from '../categorize';
+import { categorize } from '../categorization';
 
-const makeTx = (overrides: Partial<NormalizedTx> & { purpose?: string }): NormalizedTx => ({
-  purpose: '',
-  counterpartName: undefined,
-  rawCode: undefined,
-  ...overrides,
+describe('categorize', () => {
+  it('detects salary', () => {
+    const res = categorize({
+      text: 'Gehalt ACME GmbH Oktober',
+      amount: 2500,
+    });
+    expect(res.category).toBe('income_salary');
+    expect(res.confidence).toBeGreaterThan(0.7);
+  });
+
+  it('detects groceries', () => {
+    const res = categorize({
+      text: 'Kartenzahlung REWE FILIALE 1234',
+      amount: -45.9,
+      counterpart: 'REWE FILIALE 1234',
+    });
+    expect(res.category).toBe('groceries');
+  });
+
+  it('detects subscriptions', () => {
+    const res = categorize({
+      text: 'NETFLIX.COM 12345',
+      amount: -15.99,
+    });
+    expect(res.category).toBe('subscriptions');
+  });
+
+  it('detects telecom providers', () => {
+    const res = categorize({
+      text: 'Deutsche Telekom GmbH Rechnung',
+      amount: -49.99,
+    });
+    expect(res.category).toBe('telecom_internet');
+  });
+
+  it('detects bank fees', () => {
+    const res = categorize({
+      text: 'Kontoführungsgebühr Sparkasse März',
+      amount: -8.5,
+    });
+    expect(res.category).toBe('fees_charges');
+  });
+
+  it('detects cash withdrawals', () => {
+    const res = categorize({
+      text: 'Bargeldauszahlung ATM 1234',
+      amount: -100,
+    });
+    expect(res.category).toBe('cash_withdrawal');
+  });
+
+  it('detects internal transfers', () => {
+    const res = categorize({
+      text: 'SEPA-Überweisung Eigene Kontonummer 12345678',
+      amount: -300,
+    });
+    expect(res.category).toBe('transfer_internal');
+  });
+
+  it('falls back to review', () => {
+    const res = categorize({
+      text: 'Unbekannter Vorgang XYZ',
+      amount: -3.21,
+    });
+    expect(res.category).toBe('other');
+    expect(res.source).toBe('fallback');
+  });
+
+  it('classifies complex internal transfer text correctly', () => {
+    const res = categorize({
+      text: 'Empfänger: Aaron McIntosh Kto/IBAN: DE32200411770270381700 Übertrag / Überweisung Depot',
+      amount: -2700,
+    });
+    expect(res.category).toBe('transfer_internal');
+  });
+
+  it('distinguishes Uber Eats as delivery', () => {
+    const res = categorize({
+      text: 'UBER *EATS HELP.UBER.COM NL Karte',
+      amount: -23.5,
+    });
+    expect(res.category).toBe('dining_out');
+  });
+
+  it('classifies Uber ride as transport', () => {
+    const res = categorize({
+      text: 'UBER TRIP HELP.UBER.COM',
+      amount: -12.8,
+    });
+    expect(res.category).toBe('transport');
+  });
+
+  it('classifies Drillisch payments as telecom_internet', () => {
+    const res = categorize({
+      text: 'Drillisch Online GmbH Kundenkonto 123456',
+      amount: -19.99,
+    });
+    expect(res.category).toBe('telecom_internet');
+  });
+
+  it('classifies OpenAI subscription as subscriptions', () => {
+    const res = categorize({
+      text: 'OPENAI*ChatGPT Subscription',
+      amount: -20,
+    });
+    expect(res.category).toBe('subscriptions');
+  });
+
+  it('classifies Bäckerei Heinemann spend as dining_out', () => {
+    const res = categorize({
+      text: 'Baeckerei Heinemann Buchungstext: Baeckerei Heinemann',
+      amount: -4.2,
+    });
+    expect(res.category).toBe('dining_out');
+  });
 });
-
-describe('inferCategory', () => {
-  it('detects groceries keywords', () => {
-    expect(inferCategory(makeTx({ purpose: 'Einkauf REWE MARKT 123 Berlin' }))).toBe('Groceries');
-    expect(inferCategory(makeTx({ purpose: 'ALDI Süd Filiale' }))).toBe('Groceries');
-  });
-
-  it('detects transport', () => {
-    expect(inferCategory(makeTx({ purpose: 'UBER *TRIP 12345' }))).toBe('Transport');
-    expect(inferCategory(makeTx({ purpose: 'BVG Monatskarte' }))).toBe('Transport');
-  });
-
-  it('detects online services', () => {
-    expect(inferCategory(makeTx({ purpose: 'PAYPAL *OPENAI' }))).toBe('Online Services');
-    expect(inferCategory(makeTx({ purpose: 'Amazon Marketplace' }))).toBe('Online Services');
-  });
-
-  it('detects mobile and internet providers', () => {
-    expect(inferCategory(makeTx({ purpose: 'Telekom Deutschland GmbH' }))).toBe('Mobile/Internet');
-    expect(inferCategory(makeTx({ purpose: 'Rechnung o2 Free' }))).toBe('Mobile/Internet');
-  });
-
-  it('detects fees even when accent missing', () => {
-    expect(inferCategory(makeTx({ purpose: 'Kontofuehrungsgebuehr' }))).toBe('Fees');
-    expect(inferCategory(makeTx({ purpose: 'KARTENENTGELT MÄRZ' }))).toBe('Fees');
-  });
-
-  it('detects income', () => {
-    expect(inferCategory(makeTx({ purpose: 'Gehalt ACME GmbH' }))).toBe('Income');
-    expect(inferCategory(makeTx({ purpose: 'Monatliche Lohnzahlung' }))).toBe('Income');
-  });
-
-  it('falls back to Other when no rule matches', () => {
-    expect(inferCategory(makeTx({ purpose: 'Spontanüberweisung an Freund' }))).toBe('Other');
-  });
-});
-
-

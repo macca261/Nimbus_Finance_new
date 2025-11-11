@@ -24,25 +24,26 @@ describe('Comdirect Giro CSV', () => {
       '"01.03.2025";"01.03.2025";"Gutschrift";"GEHALT ACME GMBH";"3.000,00"',
     ].join('\n'), 'utf8')
 
-    const res = await request(app).post('/api/imports/csv').attach('file', fx)
+    const res = await request(app).post('/api/import').attach('file', fx)
     expect(res.status).toBe(200)
-    const data = res.body?.data || res.body
-    expect(data.imported).toBe(3)
+    expect(res.body?.ok).toBe(true)
+    expect(res.body?.transactionCount).toBe(3)
 
     const after = await request(app).get('/api/summary/balance')
     const afterCents = (after.body?.data || after.body)?.balanceCents ?? 0
     expect(afterCents - beforeCents).toBe(300000 - 6699 - 1234)
 
-    const tx = await request(app).get('/api/transactions?limit=10')
+    const tx = await request(app).get('/api/transactions/recent?limit=10')
     expect(tx.status).toBe(200)
-    const list = tx.body?.data || []
-    const amounts = new Set(list.map((t: any) => Number(t.amountCents)))
+    const list = (tx.body?.transactions ?? tx.body?.data ?? []) as any[]
+    const amounts = new Set(list.map((t: any) => Number(t.amountCents ?? Math.round(Number(t.amount) * 100))))
     expect(amounts.has(-6699)).toBe(true)
     expect(amounts.has(-1234)).toBe(true)
     expect(amounts.has(300000)).toBe(true)
-    const dates = new Set(list.map((t: any) => String(t.bookingDate)))
+    const dates = new Set(list.map((t: any) => String(t.bookingDate ?? t.bookedAt)))
     expect(dates.has('2025-10-27')).toBe(true)
     expect(dates.has('2025-03-01')).toBe(true)
+    expect(list.some((t: any) => t.rawText?.includes('Miete') && t.category === 'rent')).toBe(true)
   })
 })
 

@@ -20,13 +20,15 @@ export default function CSVUploader() {
     if (!acceptedFiles.length) return;
     const file = acceptedFiles[0];
     const form = new FormData();
-    form.append('file', file);
+    form.append('file', file); // Field name must be "file"
     try {
       setLoading(true);
-      const { data } = await api.post('/imports/csv', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      const { data } = await api.post('/api/import', form, { headers: { 'Content-Type': 'multipart/form-data' } });
       setSummary(data);
     } catch (err: any) {
-      setError(err?.response?.data?.error ?? 'Upload failed');
+      const msg = err?.response?.data?.error ?? 'Upload failed';
+      const hint = err?.response?.data?.hint;
+      setError(hint ? `${msg}. ${hint}` : msg);
     } finally {
       setLoading(false);
     }

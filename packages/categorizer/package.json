@@ -1,0 +1,22 @@
+{
+  "name": "@nimbus/categorizer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nimbus/parsers-de": "file:../parsers-de"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}
+
