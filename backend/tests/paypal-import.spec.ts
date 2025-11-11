@@ -93,14 +93,14 @@ describe('parsePayPalCsv', () => {
     expect(result.confidence).toBe(1);
     expect(result.rows.length).toBeGreaterThan(0);
 
-    const charge = result.rows.find(
+    const anyCompleted = result.rows.find(
       r =>
-        String(r.raw.rawStatus).toLowerCase().includes('abgeschlossen') &&
+        String(r.raw.rawStatus || '').toLowerCase().includes('abgeschlossen') &&
         r.amountCents !== 0 &&
         r.raw.externalId,
     );
 
-    expect(charge).toBeDefined();
+    expect(anyCompleted).toBeDefined();
   });
 
   it('throws PayPalParseError when no valid rows remain', () => {

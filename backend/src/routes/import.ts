@@ -170,8 +170,8 @@ const handleImport: RequestHandler = async (req, res) => {
   } catch (error) {
     if (error instanceof PayPalParseError) {
       // eslint-disable-next-line no-console
-      console.error('[import] PayPalParseError', error.message, error.details);
-      return res.status(422).json({
+      console.error('[import] PayPalParseError', error);
+      return res.status(400).json({
         code: 'PAYPAL_PARSE_ERROR',
         message: error.message,
         details: error.details ?? null,
