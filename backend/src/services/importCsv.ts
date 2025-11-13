@@ -11,6 +11,7 @@ export type ImportDiagnostics = {
   duplicates: number;
   skipped: number;
   reasons: string[];
+  normalizerRulesActive: number;
 };
 
 export function persistTransactions(input: {
@@ -19,6 +20,7 @@ export function persistTransactions(input: {
   filename: string;
   transactions: NormalizedTransaction[];
   db?: Database;
+  batchId?: string;
 }): ImportDiagnostics {
   const reasons: string[] = [];
   const canonicalRows: CanonicalRow[] = [];
@@ -42,6 +44,7 @@ export function persistTransactions(input: {
       accountIban: tx.accountIban ?? undefined,
       raw: tx.metadata ? { ...(tx.raw ?? {}), metadata: tx.metadata } : tx.raw ?? undefined,
       importFile: input.filename,
+      importBatchId: input.batchId ?? null,
       bankProfile: tx.bankProfile,
       category: tx.category,
       categoryConfidence: tx.categoryConfidence,
@@ -68,6 +71,11 @@ export function persistTransactions(input: {
     reasons.push(`${duplicates} Transaction(s) were skipped as duplicates.`);
   }
 
+  const countRow = connection
+    .prepare(`SELECT COUNT(1) AS count FROM normalization_rules WHERE is_active = 1`)
+    .get() as { count: number } | undefined;
+  const normalizerRulesActive = countRow?.count ?? 0;
+
   return {
     profileId: input.profileId,
     confidence: input.confidence,
@@ -77,6 +85,7 @@ export function persistTransactions(input: {
     duplicates,
     skipped: input.transactions.length - canonicalRows.length,
     reasons,
+    normalizerRulesActive,
   };
 }
 

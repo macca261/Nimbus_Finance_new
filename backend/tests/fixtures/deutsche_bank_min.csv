@@ -1,0 +1,5 @@
+"Buchungstag";"Wertstellung";"Buchungstext";"Verwendungszweck";"Auftraggeber / Empfänger";"IBAN";"Umsatz in EUR";"Währung"
+"01.08.2025";"01.08.2025";"Kartenzahlung";"Einkauf DM-Drogerie Markt Köln";"";"";"-19,90";"EUR"
+"02.08.2025";"02.08.2025";"SEPA Gutschrift";"Gehalt August 2025";"ACME GmbH";"DE44500105175407324931";"3200,00";"EUR"
+
+

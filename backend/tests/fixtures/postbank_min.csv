@@ -1,0 +1,5 @@
+"Buchungstag";"Wertstellung";"Umsatzart";"Verwendungszweck";"Auftraggeber/Empfänger";"IBAN";"Umsatz";"Währung"
+"05.08.2025";"05.08.2025";"Kartenzahlung";"ALDI SÜD KÖLN 0492";"";"";"-12,34";"EUR"
+"06.08.2025";"06.08.2025";"Überweisungsgutschrift";"Gehalt August 2025";"ACME GmbH";"DE44500105175407324931";"2.450,00";"EUR"
+
+

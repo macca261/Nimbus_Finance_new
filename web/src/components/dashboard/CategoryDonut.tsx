@@ -40,9 +40,13 @@ export const CategoryDonut: React.FC<CategoryDonutProps> = ({ data, loading }) =
                 nameKey="label"
                 cx="50%"
                 cy="50%"
-                innerRadius={42}
-                outerRadius={70}
+                innerRadius="60%"
+                outerRadius="80%"
                 paddingAngle={1}
+                label={false}
+                labelLine={false}
+                minAngle={3}
+                isAnimationActive={false}
               >
                 {filtered.map(slice => {
                   const meta = getCategoryMeta(slice.id);
@@ -57,6 +61,7 @@ export const CategoryDonut: React.FC<CategoryDonutProps> = ({ data, loading }) =
                   fontSize: 12,
                   color: 'var(--tooltip-text)',
                   boxShadow: '0 12px 24px rgba(15, 23, 42, 0.08)',
+                  outline: 'none',
                 }}
                 formatter={(value: any, _name: any, payload: any) =>
                   `${formatCurrency(Number(value))} • ${(payload?.payload?.label as string) || payload?.payload?.id || ''}`
@@ -64,6 +69,7 @@ export const CategoryDonut: React.FC<CategoryDonutProps> = ({ data, loading }) =
               />
               <Legend
                 verticalAlign="bottom"
+                height={24}
                 iconType="circle"
                 wrapperStyle={{ fontSize: 12, color: 'var(--axis-color)' }}
                 formatter={(_value: any, entry: any) => {

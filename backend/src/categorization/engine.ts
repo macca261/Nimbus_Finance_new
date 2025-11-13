@@ -1,12 +1,16 @@
 import type { ParsedRow } from '../parser/types';
 import { normalizeText } from './normalize';
-import { SYSTEM_RULES } from './rules';
+import { SYSTEM_RULES, applyRules as applyBasicRules } from './rules';
 import { SYSTEM_MERCHANT_PATTERNS } from './merchantPatterns';
 import type {
   CategorizedTransaction,
   CategoryRule,
   MerchantPattern,
 } from './types';
+import { normalizeMerchant } from './merchants';
+import { getOverrideSync } from './overrides';
+import { txFingerprint } from '../db';
+import { normalize as runNormalizer } from '../normalizer/engine';
 
 const SEPA_METADATA_REGEX = /\b(?:SVWZ|EREF|MREF|KREF|CRED|IBAN|BIC)\+[^ ]*/gi;
 const LONG_ID_REGEX = /\b(?=[0-9A-Z]*\d)[0-9A-Z]{10,}\b/g;
@@ -48,6 +52,28 @@ type MerchantMatch = {
   category?: string;
   score: number;
   patternId: string;
+};
+
+const stableOverrideId = (row: ParsedRow): string | undefined => {
+  const raw = (row.raw ?? {}) as Record<string, unknown>;
+  const externalId = raw?.externalId;
+  if (typeof externalId === 'string' && externalId.trim().length > 0) {
+    return externalId.trim();
+  }
+
+  try {
+    return txFingerprint({
+      bookingDate: row.bookingDate,
+      valueDate: row.valutaDate ?? row.bookingDate,
+      amountCents: row.amountCents,
+      currency: (row.currency ?? 'EUR').toUpperCase(),
+      purpose: row.rawText ?? row.reference ?? '',
+      counterpartName: row.counterparty ?? undefined,
+      accountIban: row.accountIban ?? undefined,
+    } as any);
+  } catch {
+    return undefined;
+  }
 };
 
 const normalizeDescription = (row: ParsedRow): string => {
@@ -216,6 +242,35 @@ export function categorizeWithRules(
   },
 ): CategorizedTransaction {
   const normalizedDescription = normalizeDescription(row);
+  const merchantInfo = normalizeMerchant(row.rawText ?? undefined, row.counterparty);
+  const candidateParts = [
+    row.rawText,
+    typeof row.counterparty === 'string' ? row.counterparty : null,
+    typeof row.reference === 'string' ? row.reference : null,
+  ].filter((part): part is string => Boolean(part && part.trim()));
+  const candidateText = candidateParts.join(' ');
+  const normalizerResult = runNormalizer({
+    text: candidateText,
+    counterparty: row.counterparty ?? undefined,
+  });
+  const basicRuleHit = applyBasicRules(merchantInfo.merchant, row.rawText ?? '');
+  const normalizedText = row.normalizedText ?? normalizeText(row.rawText ?? '');
+  const overrideId = stableOverrideId(row);
+  const override = overrideId ? getOverrideSync(overrideId) : null;
+
+  if (override) {
+    return {
+      ...row,
+      normalizedText,
+      normalizedDescription,
+      merchant: normalizerResult.merchant ?? merchantInfo.merchant ?? row.counterparty ?? undefined,
+      categorySystem: 'nimbus-v1',
+      category: override.category as any,
+      categorySource: 'user',
+      categoryConfidence: 1,
+    };
+  }
+
   const merchantMatch = detectMerchant(normalizedDescription, ctx.merchantPatterns);
 
   const combinedRules = [...(ctx.userRules ?? []), ...ctx.systemRules];
@@ -231,16 +286,55 @@ export function categorizeWithRules(
     });
   }
 
-  const normalizedText = row.normalizedText ?? normalizeText(row.rawText ?? '');
+  if (basicRuleHit) {
+    ruleMatches.push({
+      category: basicRuleHit.category as any,
+      score: 210,
+      source: basicRuleHit.source,
+      ruleId: 'basic_rules:v1',
+    });
+  }
 
   const best = selectBestMatch(ruleMatches, merchantMatch);
+
+  const defaultMerchant =
+    normalizerResult.merchant ??
+    merchantInfo.merchant ??
+    merchantMatch?.merchant ??
+    row.counterparty ??
+    undefined;
 
   const categorized: CategorizedTransaction = {
     ...row,
     normalizedText,
     normalizedDescription,
-    merchant: merchantMatch?.merchant ?? row.counterparty ?? undefined,
+    merchant: defaultMerchant,
   };
+
+  if (normalizerResult.matchedRuleId) {
+    const rawRecord = { ...(categorized.raw ?? {}) };
+    rawRecord.normalizerMatchedRuleId = normalizerResult.matchedRuleId;
+    categorized.raw = rawRecord;
+  }
+
+  if (normalizerResult.categoryHint && (row.category === undefined || row.category === null)) {
+    categorized.categoryHint = normalizerResult.categoryHint;
+  }
+
+  if (
+    normalizerResult.matchedRuleId &&
+    (process.env.NODE_ENV ?? '').toLowerCase() !== 'production'
+  ) {
+    const sourceId =
+      (categorized.raw && typeof categorized.raw.__source === 'string'
+        ? (categorized.raw.__source as string)
+        : null) ??
+      row.bankProfile ??
+      row.accountId ??
+      'unknown';
+    // eslint-disable-next-line no-console
+    console.debug(`[normalizer] matched rule ${normalizerResult.matchedRuleId} for ${sourceId}`);
+  }
 
   if (best) {
     return {

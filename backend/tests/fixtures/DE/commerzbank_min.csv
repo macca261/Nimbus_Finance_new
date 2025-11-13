@@ -1,0 +1,6 @@
+Datum;Buchungstext;Verwendungszweck;Betrag;Saldo;Begünstigter
+07.11.2025;Überweisung;Honorarzahlung;+1500,00;8500,00;Freelancer GmbH
+08.11.2025;Kartenzahlung;Restaurant;-28,40;8471,60;
+09.11.2025;Dauerauftrag;Miete;-900,00;7571,60;Vermieter
+
+

@@ -145,16 +145,16 @@ export function categorize(input: CategorizeInput): CategorizeResult {
 
   const syntheticRow: ParsedRow = {
     bookingDate: input.transaction?.bookingDate ?? '1970-01-01',
-    valutaDate: input.transaction?.valutaDate ?? null,
+    valutaDate: input.transaction?.valueDate ?? null,
     amountCents,
     currency: input.transaction?.currency ?? 'EUR',
     direction,
     accountId: input.transaction?.accountId ?? 'categorize:adhoc',
-    accountIban: input.iban ?? input.transaction?.accountIban ?? null,
+    accountIban: input.iban ?? null,
     counterparty: input.counterpart ?? input.transaction?.counterparty ?? null,
-    counterpartyIban: input.transaction?.counterpartyIban ?? null,
-    mcc: input.transaction?.mcc ?? null,
-    reference: input.memo ?? input.transaction?.reference ?? null,
+    counterpartyIban: null,
+    mcc: null,
+    reference: input.memo ?? input.transaction?.referenceId ?? null,
     rawText: input.text ?? '',
     raw: {
       __source: 'categorize',

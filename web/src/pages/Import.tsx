@@ -16,11 +16,23 @@ export default function ImportPage() {
       const fd = new FormData();
       fd.append('file', file);
       const res = await fetch('/api/import', { method: 'POST', body: fd });
-      const json = await res.json();
-      if (!res.ok || !json?.ok) throw new Error(json?.error || 'Import failed');
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json) {
+        if (json?.code === 'PAYPAL_PARSE_ERROR') {
+          console.error('PayPal parse error', json);
+          throw new Error(json.details || json.message || 'PayPal CSV konnte nicht geparst werden.');
+        }
+        if (json?.code === 'BANK_PARSE_ERROR') {
+          throw new Error(json.message || 'Bank CSV konnte nicht geparst werden.');
+        }
+        if (json?.code === 'BAD_REQUEST' || json?.code === 'IMPORT_EMPTY') {
+          throw new Error(json.message || 'Import fehlgeschlagen.');
+        }
+        throw new Error(json?.message || json?.error || 'Import failed');
+      }
       setResult(json as ImportSuccessPayload);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message ?? 'Import failed');
     } finally {
       setBusy(false);
     }

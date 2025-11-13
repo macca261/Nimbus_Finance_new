@@ -1,0 +1,6 @@
+Auftragskonto;Buchungstag;Valutadatum;Buchungstext;Verwendungszweck;Begünstigter/Zahlungspflichtiger;Kontonummer;BLZ;Betrag;Währung;Info;Saldo
+DE12345678901234567890;01.11.2025;01.11.2025;Gehaltseingang;Gehalt November;Firma AG;DE98765432109876543210;70050000;+2500,00;EUR;;5000,00
+DE12345678901234567890;02.11.2025;02.11.2025;Kartenzahlung;Einkauf Supermarkt;REWE AG;;70060000;-45,67;EUR;Karte;4954,33
+DE12345678901234567890;03.11.2025;03.11.2025;Überweisung;Miete;Vermieterin Müller;DE11223344556677889900;70070000;-800,00;EUR;;
+
+

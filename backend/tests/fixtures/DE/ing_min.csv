@@ -1,0 +1,6 @@
+Datum;Name / Zahlungspartner;Konto / IBAN;Verwendungszweck;Betrag;Währung;Typ
+16.11.2025;Firma XYZ;DE44556677889900112233;Gehalt;+2600,00;EUR;Gutschrift
+17.11.2025;Supermarkt;;Einkauf;-55,30;EUR;Kartenzahlung
+18.11.2025;Vermieter;DE99887766554433221100;Miete;-750,00;EUR;Überweisung
+
+

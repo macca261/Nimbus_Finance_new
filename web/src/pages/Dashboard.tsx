@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '../layout/AppShell';
 import { useDashboardState } from '../hooks/useDashboardState';
@@ -12,11 +12,15 @@ import { RecentActivityMini } from '../components/dashboard/RecentActivityMini';
 import { formatCurrency, formatPercent } from '../lib/format';
 import { EngagementStrip } from '../components/dashboard/EngagementStrip';
 import { InsightsRow } from '../components/dashboard/InsightsRow';
+import { ResetDbCard } from '../components/dashboard/ResetDbCard';
+import { classnames } from '../ui/tokens';
+import { ManageImportsDialog } from '../components/admin/ManageImportsDialog';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const dashboard = useDashboardState();
   const summary = dashboard.summary;
+  const [manageImportsOpen, setManageImportsOpen] = useState(false);
 
   const headerSubtitle = useMemo(() => {
     const accountLabel =
@@ -116,7 +120,7 @@ export const Dashboard: React.FC = () => {
   if (dashboard.uiState === 'empty') {
     return (
       <AppShell>
-        <div className="flex flex-col gap-8">
+        <div className={classnames.sectionGap}>
           <DashboardEmptyState
             onImported={dashboard.refetch}
             onNavigateToImports={() => navigate('/imports')}
@@ -128,7 +132,7 @@ export const Dashboard: React.FC = () => {
 
   return (
     <AppShell>
-      <div className="flex flex-col gap-6">
+      <div className={classnames.sectionGap}>
         <DashboardHeader
           userName={null}
           subtitle={headerSubtitle}
@@ -144,6 +148,8 @@ export const Dashboard: React.FC = () => {
           onUploadClick={() => navigate('/imports')}
         />
 
+        <ResetDbCard onReset={dashboard.refetch} onManageImports={() => setManageImportsOpen(true)} />
+
         {dashboard.error ? (
           <div className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
             {dashboard.error}
@@ -156,16 +162,22 @@ export const Dashboard: React.FC = () => {
           </div>
         ) : null}
 
-        <DashboardKpiRow kpis={kpiData} loading={dashboard.loading} />
+        <section>
+          <DashboardKpiRow kpis={kpiData} loading={dashboard.loading} />
+        </section>
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-          <DashboardBalanceChart
-            balance={summary?.balanceOverTime ?? []}
-            cashflow={summary?.cashflowByMonth ?? []}
-            loading={dashboard.loading}
-          />
-          <DashboardCategoryPanel data={categorySlices} loading={dashboard.loading} />
-        </div>
+        <section className="grid gap-4 lg:grid-cols-12">
+          <div className="lg:col-span-7 xl:col-span-8">
+            <DashboardBalanceChart
+              balance={summary?.balanceOverTime ?? []}
+              cashflow={summary?.cashflowByMonth ?? []}
+              loading={dashboard.loading}
+            />
+          </div>
+          <div className="lg:col-span-5 xl:col-span-4">
+            <DashboardCategoryPanel data={categorySlices} loading={dashboard.loading} />
+          </div>
+        </section>
 
         <DashboardTiles
           subscriptions={summary?.subscriptions ?? []}
@@ -197,6 +209,11 @@ export const Dashboard: React.FC = () => {
 
         <RecentActivityMini transactions={dashboard.recent} loading={dashboard.loading && !dashboard.recent.length} />
       </div>
+      <ManageImportsDialog
+        open={manageImportsOpen}
+        onClose={() => setManageImportsOpen(false)}
+        onDeleted={dashboard.refetch}
+      />
     </AppShell>
   );
 };

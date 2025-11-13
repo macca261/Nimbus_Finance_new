@@ -1,0 +1,12 @@
+[
+  { "if": { "merchant": ["REWE", "EDEKA", "ALDI", "LIDL", "NETTO", "PENNY"] }, "category": "groceries" },
+  { "if": { "merchant": ["UBER"] }, "category": "transport:rideshare" },
+  { "if": { "merchant": ["DEUTSCHE_BAHN"] }, "category": "transport:public" },
+  { "if": { "merchant": ["AMAZON"] }, "category": "shopping:online" },
+  { "if": { "merchant": ["DM"] }, "category": "shopping" },
+  { "if": { "merchant": ["NETFLIX", "SPOTIFY"] }, "category": "subscriptions:streaming" },
+  { "if": { "textContains": ["miete", "kaltmiete", "warmmiete", "rent"] }, "category": "housing:rent" },
+  { "if": { "textContains": ["strom", "gas", "wasser", "telekom", "vodafone"] }, "category": "housing:utilities" }
+]
+
+

@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from 'express';
+import crypto from 'node:crypto';
 import multer from 'multer';
 import { parseBankCsv, ParseBankCsvError } from '../parser/parseBankCsv';
 import { PayPalParseError } from '../parser/paypal';
@@ -19,30 +20,30 @@ export const importRouter = Router();
 
 const handleImport: RequestHandler = async (req, res) => {
   try {
-    if (!req.file?.buffer) {
-      return res.status(400).json({ error: 'Keine Datei übermittelt.' });
+    if (!req.file?.buffer || req.file.buffer.length === 0) {
+      return res.status(400).json({
+        code: 'BAD_REQUEST',
+        message: 'Keine Datei zum Import übermittelt.',
+      });
     }
 
+    const buffer = req.file.buffer;
     const hint = typeof req.query.bank === 'string' ? req.query.bank : undefined;
-    const result = await parseBankCsv(req.file.buffer, hint);
+    const result = await parseBankCsv(buffer, hint);
 
     if (!result.rows.length) {
       return res.status(400).json({
-        error: 'Unsupported or undetected bank',
-        hints: [
-          'Keine gültigen Umsätze erkannt – Tabelle enthält keine Buchungszeilen.',
-          'Prüfe Kopfzeile: enthält sie "Buchungstag" und "Umsatz in EUR"?',
-          'Prüfe Trennzeichen (; vs ,) und Dezimalformat (1.234,56).',
-          'CSV als UTF-8 oder ISO-8859-1 (Latin-1) speichern.',
-        ],
+        code: 'IMPORT_EMPTY',
+        message: 'Die Datei enthält keine erkennbaren Umsätze.',
         profileId: result.profileId,
         confidence: result.confidence,
-        warnings: result.warnings,
+        warnings: result.warnings ?? [],
         candidates: result.candidates,
       });
     }
 
     const importFile = req.file?.originalname ?? 'upload.csv';
+    const batchId = crypto.randomUUID();
 
     const db = (req.app as any)?.locals?.db ?? defaultDb;
     const overrideRules = getAllOverrideRules(db);
@@ -113,6 +114,7 @@ const handleImport: RequestHandler = async (req, res) => {
       filename: importFile,
       transactions: normalized,
       db,
+      batchId,
     });
 
     runTransferMatching(db);
@@ -131,13 +133,15 @@ const handleImport: RequestHandler = async (req, res) => {
 
     if (diagnostics.inserted === 0) {
       return res.status(400).json({
-        error: 'Keine gültigen Umsätze importiert.',
+        code: 'IMPORT_EMPTY',
+        message: 'Keine gültigen Umsätze importiert.',
         profileId: diagnostics.profileId,
         confidence: diagnostics.confidence,
         rowCount: diagnostics.rowCount,
         reasons: diagnostics.reasons,
         warnings: result.warnings ?? [],
         candidates: result.candidates,
+        normalizerRulesActive: diagnostics.normalizerRulesActive,
       });
     }
 
@@ -146,13 +150,17 @@ const handleImport: RequestHandler = async (req, res) => {
         profileId: diagnostics.profileId,
         fileName: importFile,
         confidence: diagnostics.confidence,
-        transactionCount: diagnostics.rowCount,
+        transactionCount: diagnostics.inserted,
         warnings: result.warnings ?? [],
+        batchId,
       },
       db,
     );
 
     return res.json({
+      code: 'OK',
+      imported: diagnostics.inserted,
+      warnings: result.warnings ?? [],
       ok: true,
       profileId: diagnostics.profileId,
       confidence: diagnostics.confidence,
@@ -162,15 +170,22 @@ const handleImport: RequestHandler = async (req, res) => {
       duplicateCount: diagnostics.duplicates,
       skippedCount: diagnostics.skipped,
       reasons: diagnostics.reasons,
-      warnings: result.warnings,
       candidates: result.candidates,
       openingBalance: result.openingBalance,
       closingBalance: result.closingBalance,
+      normalizerRulesActive: diagnostics.normalizerRulesActive,
     });
   } catch (error) {
+    const err = error as { name?: string; message?: string; details?: unknown; stack?: string };
+    // eslint-disable-next-line no-console
+    console.error('[import] failed', {
+      name: err?.name,
+      message: err?.message,
+      details: err?.details,
+      stack: err?.stack,
+    });
+
     if (error instanceof PayPalParseError) {
-      // eslint-disable-next-line no-console
-      console.error('[import] PayPalParseError', error);
       return res.status(400).json({
         code: 'PAYPAL_PARSE_ERROR',
         message: error.message,
@@ -179,15 +194,17 @@ const handleImport: RequestHandler = async (req, res) => {
     }
     if (error instanceof ParseBankCsvError) {
       return res.status(400).json({
-        error: error.message,
+        code: 'BANK_PARSE_ERROR',
+        message: error.message,
         hints: error.hints.length ? error.hints : undefined,
         candidates: error.candidates.length ? error.candidates : undefined,
         warnings: [],
       });
     }
-    // eslint-disable-next-line no-console
-    console.error('[import] Unhandled import error', error);
-    return res.status(500).json({ error: 'Unbekannter Importfehler' });
+    return res.status(500).json({
+      code: 'IMPORT_FAILED',
+      message: 'Unbekannter Importfehler',
+    });
   }
 };
 

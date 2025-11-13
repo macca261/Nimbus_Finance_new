@@ -40,9 +40,16 @@ export const DashboardCategoryPanel: React.FC<DashboardCategoryPanelProps> = ({ 
                   <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl" style={{ background: `${meta.color}33`, color: meta.color }}>
                     {meta.icon ?? '•'}
                   </span>
-                  <div>
-                    <p className="font-medium text-slate-900 dark:text-slate-100">{slice.label || meta.label || slice.id}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">{formatCurrency(slice.total)}</p>
+                  <div className="min-w-0">
+                    <p
+                      className="truncate font-medium text-slate-900 dark:text-slate-100"
+                      title={slice.label || meta.label || slice.id}
+                    >
+                      {slice.label || meta.label || slice.id}
+                    </p>
+                    <p className="truncate text-xs text-slate-500 dark:text-slate-400" title={formatCurrency(slice.total)}>
+                      {formatCurrency(slice.total)}
+                    </p>
                   </div>
                 </div>
                 <span className="text-xs font-medium text-slate-600 dark:text-slate-300">

@@ -1,10 +1,19 @@
 import { parse as parseCsvSync } from 'csv-parse/sync';
-import { isPayPalCsvText, parsePayPalCsv } from './paypal';
+import { isPayPalCsvText, parsePayPalCsv, PayPalParseError } from './paypal';
 import { categorizeBatch } from '../categorization';
 import type { ParseResult, ParsedRow, ParseCandidate } from '../parsing/types';
 import { BANK_PROFILES } from './profiles';
 import type { BankProfile } from './types';
 import { normalizeHeader, sniffDelimiter, tryDecodeBuffer, parseEuroAmount } from './utils';
+import { isProfileCsvText, parseWithProfile } from '../parsing/profileEngine';
+import { detect as detectIngDe, parse as parseIngDe } from '../parsing/profiles/ing_de';
+import { detect as detectDkbDe, parse as parseDkbDe } from '../parsing/profiles/dkb_de';
+import { detect as detectSparkasseDe, parse as parseSparkasseDe } from '../parsing/profiles/sparkasse_de';
+import { detect as detectDeutscheBankDe, parse as parseDeutscheBankDe } from '../parsing/profiles/deutsche_bank_de';
+import { detect as detectCommerzbankDe, parse as parseCommerzbankDe } from '../parsing/profiles/commerzbank_de';
+import { detect as detectPostbankDe, parse as parsePostbankDe } from '../parsing/profiles/postbank_de';
+import { detect as detectN26De, parse as parseN26De } from '../parsing/profiles/n26_de';
+import { ingProfile } from '../parsing/profiles/ing';
 
 const DEFAULT_HINTS = [
   'Prüfe Kopfzeile: enthält sie "Buchungstag" und "Betrag"?',
@@ -167,13 +176,59 @@ function detectProfile(
 }
 
 export async function parseBankCsv(fileBuffer: Buffer, hintedBank?: string): Promise<ParseResult> {
-  // 1) Decode once to handle different encodings reliably
+  // Decode once to handle detection and downstream parsing
   const { text } = tryDecodeBuffer(fileBuffer);
 
-  // 2) Special-case: PayPal CSV (German/Intl export)
-  // Detected *before* generic parsing to avoid csv-parse quote errors.
-  if (isPayPalCsvText(text)) {
-    return parsePayPalCsv(fileBuffer);
+  // 1) PayPal short-circuit
+  try {
+    if (isPayPalCsvText(text)) {
+      return parsePayPalCsv(fileBuffer);
+    }
+  } catch (error) {
+    if (error instanceof PayPalParseError) {
+      throw error;
+    }
+    throw error;
+  }
+
+  if (detectCommerzbankDe(text).hit) {
+    return parseCommerzbankDe(fileBuffer);
+  }
+
+  const ingDetection = detectIngDe(text);
+  if (ingDetection.hit) {
+    return parseIngDe(fileBuffer);
+  }
+
+  const dkbDetection = detectDkbDe(text);
+  if (dkbDetection.hit) {
+    return parseDkbDe(fileBuffer);
+  }
+
+  if (detectN26De(text).hit) {
+    return parseN26De(fileBuffer);
+  }
+
+  if (detectPostbankDe(text).hit) {
+    return parsePostbankDe(fileBuffer);
+  }
+
+  const sparkasseDetection = detectSparkasseDe(text);
+  if (sparkasseDetection.hit) {
+    return parseSparkasseDe(fileBuffer);
+  }
+
+  const deutscheDetection = detectDeutscheBankDe(text);
+  if (deutscheDetection.hit) {
+    return parseDeutscheBankDe(fileBuffer);
+  }
+
+  try {
+    if (isProfileCsvText(fileBuffer, ingProfile)) {
+      return parseWithProfile(fileBuffer, ingProfile);
+    }
+  } catch {
+    // Detection errors fall through to legacy parsing
   }
 
   const allLines = text.split(/\r?\n/);

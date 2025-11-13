@@ -1,4 +1,42 @@
 import type { CategoryRule } from './types';
+import rawRules from './rules.json';
+
+export type Rule = {
+  if: {
+    merchant?: string[];
+    textContains?: string[];
+  };
+  category: string;
+};
+
+export type RuleHit = {
+  category: string;
+  source: 'rule';
+};
+
+const BASIC_RULES = rawRules as Rule[];
+
+export function applyRules(merchant: string | undefined, rawText: string): RuleHit | null {
+  const haystack = (rawText || '').toLowerCase();
+
+  for (const rule of BASIC_RULES) {
+    let matches = true;
+
+    if (rule.if.merchant && rule.if.merchant.length > 0) {
+      matches = matches && !!merchant && rule.if.merchant.includes(merchant);
+    }
+
+    if (matches && rule.if.textContains && rule.if.textContains.length > 0) {
+      matches = rule.if.textContains.some(token => haystack.includes(token.toLowerCase()));
+    }
+
+    if (matches) {
+      return { category: rule.category, source: 'rule' };
+    }
+  }
+
+  return null;
+}
 
 export const SYSTEM_RULES: CategoryRule[] = [
   {

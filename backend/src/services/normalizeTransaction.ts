@@ -48,7 +48,7 @@ export function toNormalizedTransaction(
   return {
     id: fingerprint(row, profileId),
     bookingDate: row.bookingDate,
-    valutaDate: row.valutaDate,
+    valutaDate: row.valutaDate ?? undefined,
     amountCents: row.amountCents,
     currency: row.currency,
     direction: row.direction,

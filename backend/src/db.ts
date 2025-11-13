@@ -24,6 +24,7 @@ export type CanonicalRow = {
   rawCode?: string
   raw?: Record<string, unknown>
   importFile?: string | null
+  importBatchId?: string | null
   category?: string
   categoryConfidence?: number
   categorySource?: string
@@ -108,6 +109,7 @@ export function ensureSchema(db: Database) {
   ensureColumn('category_rule_id', "ALTER TABLE transactions ADD COLUMN category_rule_id TEXT");
   ensureColumn('raw', "ALTER TABLE transactions ADD COLUMN raw TEXT");
   ensureColumn('importFile', "ALTER TABLE transactions ADD COLUMN importFile TEXT");
+  ensureColumn('importBatchId', "ALTER TABLE transactions ADD COLUMN importBatchId TEXT");
   ensureColumn('fingerprint', "ALTER TABLE transactions ADD COLUMN fingerprint TEXT");
   ensureColumn('direction', "ALTER TABLE transactions ADD COLUMN direction TEXT");
   ensureColumn('counterpartyIban', "ALTER TABLE transactions ADD COLUMN counterpartyIban TEXT");
@@ -177,6 +179,42 @@ export function ensureSchema(db: Database) {
       warnings TEXT,
       createdAt TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
     );
+  `);
+
+  let importColumns = db.prepare(`PRAGMA table_info('imports')`).all() as { name: string }[];
+  const ensureImportColumn = (name: string, sql: string) => {
+    const exists = importColumns.some(c => c.name === name);
+    if (!exists) {
+      try {
+        db.exec(sql);
+      } catch (err) {
+        console.warn('[migrate] import column ensure failed:', name, (err as Error)?.message || err);
+      }
+      importColumns = db.prepare(`PRAGMA table_info('imports')`).all() as { name: string }[];
+    }
+  };
+
+  ensureImportColumn('batchId', "ALTER TABLE imports ADD COLUMN batchId TEXT");
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_imports_createdAt ON imports(createdAt DESC);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_imports_batchId ON imports(batchId);`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS normalization_rules (
+      id TEXT PRIMARY KEY,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      priority INTEGER NOT NULL DEFAULT 100,
+      matcher TEXT NOT NULL,
+      pattern TEXT NOT NULL,
+      normalizeTo TEXT NOT NULL,
+      categoryHint TEXT,
+      notes TEXT,
+      createdAt DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+      updatedAt DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    );
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_normalization_rules_priority
+    ON normalization_rules(priority ASC, createdAt ASC);
   `);
 
   db.exec(`
@@ -406,6 +444,7 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
     confidence,
     createdAt,
     transactionPayload,
+    importBatchId: row.importBatchId ?? null,
   };
 }
 
@@ -425,6 +464,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       rawCode,
       raw,
       importFile,
+      importBatchId,
       category,
       categoryConfidence,
       category_source,
@@ -457,6 +497,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       @rawCode,
       @raw,
       @importFile,
+      @importBatchId,
       @category,
       @categoryConfidence,
       @categorySource,
@@ -517,6 +558,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         rawCode: base.rawCode,
         raw: base.raw ? JSON.stringify(base.raw) : null,
         importFile: base.importFile,
+        importBatchId: base.importBatchId ?? null,
         category: base.category,
         categoryConfidence: base.categoryConfidence,
         categorySource: base.categorySource,
@@ -586,42 +628,48 @@ export interface ImportMeta {
   confidence: number;
   transactionCount: number;
   warnings: string[];
+  batchId?: string | null;
 }
 
 export function recordImport(meta: ImportMeta, conn: Database = db) {
   const stmt = conn.prepare(`
-    INSERT INTO imports (profileId, fileName, confidence, transactionCount, warnings)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO imports (profileId, fileName, confidence, transactionCount, warnings, batchId)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
-  stmt.run(
+  const result = stmt.run(
     meta.profileId,
     meta.fileName,
     meta.confidence,
     meta.transactionCount,
     JSON.stringify(meta.warnings ?? []),
+    meta.batchId ?? null,
   );
+  return Number(result.lastInsertRowid);
 }
 
 export function getLastImport(conn: Database = db) {
   const row = conn
     .prepare(
-      `SELECT profileId, fileName, confidence, transactionCount, warnings, createdAt
+      `SELECT id, profileId, fileName, confidence, transactionCount, warnings, createdAt, batchId
        FROM imports
        ORDER BY datetime(createdAt) DESC
        LIMIT 1`,
     )
     .get() as
     | {
+        id: number;
         profileId: string;
         fileName: string;
         confidence: number;
         transactionCount: number;
         warnings: string | null;
         createdAt: string;
+        batchId: string | null;
       }
     | undefined;
   if (!row) return null;
   return {
+    id: row.id,
     ...row,
     warnings: row.warnings ? (JSON.parse(row.warnings) as string[]) : [],
   };
@@ -630,32 +678,38 @@ export function getLastImport(conn: Database = db) {
 export function getRecentImports(limit = 10, conn: Database = db) {
   const rows = conn
     .prepare(
-      `SELECT profileId,
+      `SELECT id,
+              profileId,
               fileName,
               confidence,
               transactionCount,
               warnings,
-              createdAt
+              createdAt,
+              batchId
        FROM imports
        ORDER BY datetime(createdAt) DESC
        LIMIT ?`,
     )
     .all(limit) as Array<{
+    id: number;
     profileId: string;
     fileName: string;
     confidence: number;
     transactionCount: number;
     warnings: string | null;
     createdAt: string;
+    batchId: string | null;
   }>;
 
   return rows.map(row => ({
+    id: row.id,
     profileId: row.profileId,
     fileName: row.fileName,
     confidence: row.confidence,
     transactionCount: row.transactionCount,
     warnings: row.warnings ? (JSON.parse(row.warnings) as string[]) : [],
     createdAt: row.createdAt,
+    batchId: row.batchId ?? null,
   }));
 }
 

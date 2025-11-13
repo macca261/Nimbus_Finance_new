@@ -16,4 +16,26 @@ insertManyTransactions(db, rows)
 
 console.log('Seeded', rows.length, 'transactions for 2025-02/2025-03')
 
+const ruleCheck = db.prepare(`
+  SELECT id
+  FROM normalization_rules
+  WHERE matcher = ? AND pattern = ? AND normalizeTo = ?
+`).get('regex', 'Uber\\s?BV|Uber', 'Uber')
+
+if (!ruleCheck) {
+  db.prepare(`
+    INSERT INTO normalization_rules (id, matcher, pattern, normalizeTo, priority, categoryHint, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    'seed_uber_rule',
+    'regex',
+    'Uber\\s?BV|Uber',
+    'Uber',
+    10,
+    'mobilität.taxi_ridehail',
+    'Dev seed'
+  )
+  console.log('Seeded normalization rule for Uber')
+}
+
 

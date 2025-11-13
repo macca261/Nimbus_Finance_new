@@ -1,0 +1,5 @@
+"Buchungstag";"Wertstellung";"Vorgang";"Verwendungszweck";"Auftraggeber/Empfänger";"IBAN";"Betrag";"Währung"
+"03.08.2025";"03.08.2025";"Kartenzahlung";"REWE Köln 1234";"";"";"-32,45";"EUR"
+"04.08.2025";"04.08.2025";"SEPA Gutschrift";"Gehalt August 2025";"ACME GmbH";"DE02100400000512345678";"2850,00";"EUR"
+
+

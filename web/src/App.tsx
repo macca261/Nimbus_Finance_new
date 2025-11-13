@@ -4,6 +4,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Transactions } from './pages/Transactions';
 import { ComingSoon } from './pages/ComingSoon';
 import { ImportsPage } from './pages/Imports';
+import { NormalizerAdminPage } from './pages/admin/NormalizerAdminPage';
 
 const Budgets = () => (
   <ComingSoon title="Budgets" description="Plane deine Ausgaben und verfolge Budgetziele." />
@@ -29,6 +30,7 @@ function App() {
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/insights" element={<Insights />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/admin/normalizer" element={<NormalizerAdminPage />} />
       </Routes>
     </BrowserRouter>
   );

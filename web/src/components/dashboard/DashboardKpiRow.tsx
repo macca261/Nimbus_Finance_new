@@ -17,34 +17,33 @@ type DashboardKpiRowProps = {
 };
 
 export const DashboardKpiRow: React.FC<DashboardKpiRowProps> = ({ kpis, loading }) => {
-  if (loading && !kpis.length) {
-    return (
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <div
-            key={index}
-            className="h-28 rounded-3xl border border-slate-200 bg-slate-100/60 animate-pulse dark:border-slate-800 dark:bg-slate-900/50"
-          />
-        ))}
-      </div>
-    );
-  }
+  const skeletonKPIs: DashboardKpi[] = Array.from({ length: 4 }).map((_, index) => ({
+    id: `skeleton-${index}`,
+    label: ' ',
+    value: '—',
+  }));
+
+  const items = loading && !kpis.length ? skeletonKPIs : kpis;
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      {kpis.map(kpi => (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {items.map((kpi, index) => (
         <article
-          key={kpi.id}
-          className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white/80 px-5 py-4 shadow-sm shadow-slate-500/10 transition hover:shadow-md dark:border-slate-800 dark:bg-slate-900/70"
+          key={kpi.id ?? index}
+          className="rounded-2xl border border-slate-200/80 bg-white px-5 py-5 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70"
         >
           <header className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
               {kpi.label}
             </span>
             {kpi.trend ? <TrendBadge trend={kpi.trend} /> : null}
           </header>
-          <div className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{kpi.value}</div>
-          {kpi.hint ? <p className="text-xs text-slate-500 dark:text-slate-400">{kpi.hint}</p> : null}
+          <div className="mt-1 text-3xl font-semibold text-slate-900 dark:text-slate-50">
+            {loading && kpi.value === '—' ? '—' : kpi.value}
+          </div>
+          {kpi.hint ? (
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{kpi.hint}</p>
+          ) : null}
         </article>
       ))}
     </div>
@@ -54,16 +53,15 @@ export const DashboardKpiRow: React.FC<DashboardKpiRowProps> = ({ kpis, loading 
 function TrendBadge({ trend }: { trend: NonNullable<DashboardKpi['trend']> }) {
   const tone =
     trend.tone === 'up'
-      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200'
+      ? 'border-emerald-300/60 text-emerald-700 dark:border-emerald-600/60 dark:text-emerald-300'
       : trend.tone === 'down'
-      ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-200'
-      : 'bg-slate-100 text-slate-500 dark:bg-slate-800/80 dark:text-slate-300';
+      ? 'border-rose-300/60 text-rose-700 dark:border-rose-600/60 dark:text-rose-300'
+      : 'border-slate-300/70 text-slate-600 dark:border-slate-600/60 dark:text-slate-300';
 
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ${tone}`}>
+    <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${tone}`}>
       {trend.label}
     </span>
   );
 }
-
 

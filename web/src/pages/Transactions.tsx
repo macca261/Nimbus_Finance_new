@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link2 } from 'lucide-react';
 import { AppShell } from '../layout/AppShell';
 import { formatCurrency, formatDate } from '../lib/format';
 import { CATEGORY_OPTIONS, getCategoryMeta } from '../lib/categories';
+import CategoryControl from '../components/CategoryControl';
 
 type ApiTransaction = {
   id: number;
@@ -152,6 +153,23 @@ export const Transactions: React.FC = () => {
     return results;
   }, [items]);
 
+  const handleOverrideApplied = useCallback(
+    (txId: number, nextCategory: string | null) => {
+      setItems(prev =>
+        prev.map(item =>
+          item.id === txId
+            ? {
+                ...item,
+                category: nextCategory ?? null,
+                categorySource: nextCategory ? 'user' : null,
+              }
+            : item,
+        ),
+      );
+    },
+    [],
+  );
+
   return (
     <AppShell>
       <section className="flex flex-col gap-6">
@@ -300,6 +318,18 @@ export const Transactions: React.FC = () => {
                         : rawMeta && typeof rawMeta.transferReasons === 'string'
                         ? (rawMeta.transferReasons as string).split(',').filter(Boolean)
                         : null;
+                    const fingerprintInput =
+                      !tx.externalId && tx.bookingDate
+                        ? {
+                            bookingDate: tx.bookingDate ?? '',
+                            valueDate: tx.valueDate ?? tx.bookingDate ?? '',
+                            amountCents: tx.amountCents ?? Math.round((tx.amount ?? 0) * 100),
+                            currency: tx.currency ?? 'EUR',
+                            purpose: tx.purpose ?? tx.memo ?? '',
+                            counterpartName: tx.counterpart ?? tx.payee ?? null,
+                            accountIban: null,
+                          }
+                        : undefined;
                     return (
                       <tr key={tx.displayId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                         <td className="px-4 py-3">{formatDate(tx.bookingDate ?? undefined)}</td>
@@ -317,22 +347,33 @@ export const Transactions: React.FC = () => {
                           ) : null}
                         </td>
                         <td className="px-4 py-3">
-                          <span
-                            className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-medium"
-                            style={{ backgroundColor: meta.background, color: meta.color }}
-                          >
-                            {showInternal ? <Link2 className="h-3 w-3" /> : null}
-                            {meta.label}
-                          </span>
-                          {showInternal ? (
-                            <div className="mt-1 text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                              Interner Transfer
-                              {tx.linkedCount && tx.linkedCount > 1 ? ` · ${tx.linkedCount} Buchungen` : ''}
-                              {transferReasons && transferReasons.length
-                                ? ` · ${transferReasons.join(', ')}`
-                                : ''}
-                            </div>
-                          ) : null}
+                          <div className="flex flex-col gap-2">
+                            <span
+                              className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-medium"
+                              style={{ backgroundColor: meta.background, color: meta.color }}
+                            >
+                              {showInternal ? <Link2 className="h-3 w-3" /> : null}
+                              {meta.label}
+                            </span>
+                            {showInternal ? (
+                              <div className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                                Interner Transfer
+                                {tx.linkedCount && tx.linkedCount > 1 ? ` · ${tx.linkedCount} Buchungen` : ''}
+                                {transferReasons && transferReasons.length
+                                  ? ` · ${transferReasons.join(', ')}`
+                                  : ''}
+                              </div>
+                            ) : null}
+                            <CategoryControl
+                              id={tx.externalId ?? undefined}
+                              fingerprintInput={fingerprintInput}
+                              category={tx.category}
+                              categorySource={tx.categorySource}
+                              rawText={tx.purpose ?? tx.memo ?? null}
+                              merchant={tx.payee ?? tx.counterpart ?? null}
+                              onApplied={(_resolvedId, next) => handleOverrideApplied(tx.id, next)}
+                            />
+                          </div>
                         </td>
                         <td
                           className={`px-4 py-3 text-right text-sm font-semibold ${

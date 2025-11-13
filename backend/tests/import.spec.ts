@@ -77,6 +77,32 @@ describe('CSV import endpoint', () => {
     expect(Array.isArray(rows)).toBe(true);
     expect(rows.some((r: any) => typeof r?.purpose === 'string' && r.purpose.includes('äöüß'))).toBe(true);
   });
+
+  it('returns structured IMPORT_EMPTY response when all rows are duplicates', async () => {
+    const paypalPath = path.join(__dirname, 'fixtures', 'paypal_min.csv');
+    const buffer = fs.readFileSync(paypalPath);
+
+    const first = await request(app)
+      .post('/api/import')
+      .attach('file', buffer, 'paypal_min.csv');
+    expect(first.status).toBe(200);
+    expect(first.body?.code).toBe('OK');
+
+    const second = await request(app)
+      .post('/api/import')
+      .attach('file', buffer, 'paypal_min.csv');
+
+    expect(second.status).toBe(400);
+    expect(second.body?.code).toBe('IMPORT_EMPTY');
+    expect(second.body?.profileId).toBe('paypal');
+    expect(second.body?.confidence).toBe(1);
+    expect(second.body?.rowCount).toBeGreaterThan(0);
+    expect(Array.isArray(second.body?.reasons)).toBe(true);
+    expect(second.body?.reasons?.[0]).toMatch(/duplicates/i);
+    expect(Array.isArray(second.body?.warnings)).toBe(true);
+    expect(Array.isArray(second.body?.candidates)).toBe(true);
+    expect(second.body?.candidates?.[0]?.profileId).toBe('paypal');
+  });
 });
 
 

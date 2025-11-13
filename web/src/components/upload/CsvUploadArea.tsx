@@ -1,17 +1,35 @@
 import React, { useId, useState } from 'react';
 import { UploadCloud } from 'lucide-react';
 import { useFinanceStore } from '../../state/useFinanceStore';
+import { toast } from '../../lib/toast';
 
 export type CsvUploadAreaVariant = 'compact' | 'full' | 'inline';
 
 export interface CsvUploadAreaProps {
-  onImported?: () => void;
+  onImported?: (data?: ImportResponse) => void;
   variant?: CsvUploadAreaVariant;
   title?: string;
   description?: React.ReactNode;
   supportedHint?: string;
   className?: string;
 }
+
+type ImportResponse = {
+  code?: string;
+  message?: string;
+  profileId?: string;
+  confidence?: number;
+  warnings?: string[];
+  candidates?: Array<{ profileId: string; confidence: number }>;
+  inserted?: number;
+  imported?: number;
+  insertedCount?: number;
+  duplicateCount?: number;
+  skippedCount?: number;
+  reasons?: string[];
+  rowCount?: number;
+  details?: string;
+};
 
 export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
   onImported,
@@ -53,21 +71,70 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
         body: form,
       });
 
-      const json = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const hints = Array.isArray(json?.hints) ? `\nHinweise: ${json.hints.join(' | ')}` : '';
-        setError((json?.error as string) || `Import fehlgeschlagen.${hints}`);
+      if (res.ok) {
+        let data: ImportResponse | null = null;
+        try {
+          data = (await res.json()) as ImportResponse;
+        } catch {
+          data = null;
+        }
+        const profileId = data?.profileId || 'unbekannt';
+        const inserted =
+          data?.insertedCount ??
+          data?.imported ??
+          data?.inserted ??
+          0;
+        const message =
+          data?.message ||
+          `Profil: ${profileId}, ${inserted} neue Umsätze importiert.`;
+        setInfo(message);
+        toast(message, 'success');
+        await applyImportResult({ profileId, inserted });
+        onImported?.(data ?? undefined);
         return;
       }
 
-      const profileId = (json?.profileId as string) || 'unbekannt';
-      const inserted = (json?.inserted as number) ?? (json?.insertedCount as number) ?? 0;
-      setInfo(`Import erfolgreich: ${inserted} Buchungen (${profileId}).`);
-      await applyImportResult({ profileId, inserted });
-      onImported?.();
+      let err: ImportResponse | null = null;
+      try {
+        err = (await res.json()) as ImportResponse;
+      } catch {
+        err = null;
+      }
+
+      console.error('CSV import failed', { status: res.status, payload: err });
+
+      if (err?.code === 'IMPORT_EMPTY') {
+        const title = err.message ?? 'Keine gültigen Umsätze importiert.';
+        const details: string[] = [];
+        if (Array.isArray(err.reasons) && err.reasons.length > 0) {
+          details.push(err.reasons.join(' '));
+        }
+        if (err.profileId) details.push(`Profil: ${err.profileId}`);
+        if (typeof err.rowCount === 'number') details.push(`${err.rowCount} Zeilen`);
+        const composed = [title, details.join(' ')].filter(Boolean).join(' ');
+        setInfo(composed);
+        toast(composed, 'info');
+        onImported?.(err);
+        return;
+      }
+
+      if (err?.code === 'PAYPAL_PARSE_ERROR' || err?.code === 'BANK_PARSE_ERROR') {
+        const lines = [err.message ?? 'Die CSV-Datei konnte nicht interpretiert werden.'];
+        if (err.details) {
+          lines.push(String(err.details));
+        }
+        const message = lines.join('\n');
+        setError(message);
+        toast(message, 'error');
+        return;
+      }
+
+      const fallbackMessage = `Import fehlgeschlagen (HTTP ${res.status}).`;
+      const message = err?.message ?? fallbackMessage;
+      setError(message);
+      toast(message, 'error');
     } catch (e: any) {
-      console.error(e);
+      console.error('CSV upload error', e);
       setError(e?.message || 'Fehler beim Upload.');
     } finally {
       setBusy(false);
@@ -152,12 +219,12 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
       </div>
       <input id={inputId} type="file" accept=".csv,text/csv" onChange={onInputChange} className="hidden" />
       {error ? (
-        <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
+        <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200 whitespace-pre-wrap">
           {error}
         </div>
       ) : null}
       {info && !error ? (
-        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200">
+        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 whitespace-pre-wrap">
           {info}
         </div>
       ) : null}

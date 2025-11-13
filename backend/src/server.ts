@@ -14,6 +14,8 @@ import { overridesRouter } from './routes/overrides';
 import { transactionsRouter } from './routes/transactions';
 import dashboardRouter from './routes/dashboard';
 import devResetRouter from './routes/dev-reset';
+import { mountAdminRoutes } from './routes/admin';
+import normalizerRouter from './routes/normalizer';
 import os from 'node:os';
 import fs from 'node:fs';
 import { decodeCsvBuffer } from './lib/text';
@@ -171,6 +173,8 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   app.use('/api/overrides', overridesRouter);
   app.use('/api/transactions', transactionsRouter);
   app.use('/api/dashboard', dashboardRouter);
+  app.use('/api/normalizer', normalizerRouter);
+  mountAdminRoutes(app);
   if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
     app.use('/api', devResetRouter);
     console.log('Mounted: /api/dev/reset (development)');

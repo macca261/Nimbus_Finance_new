@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, Filter, UploadCloud } from 'lucide-react';
 import type { AccountOption, PeriodOption } from '../../hooks/useDashboardState';
+import { classnames } from '../../ui/tokens';
 
 type DashboardHeaderProps = {
   userName?: string | null;
@@ -35,10 +36,12 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
   const greeting = `Guten Morgen, ${greetingName} 👋`;
 
   return (
-    <div className="flex flex-col gap-6 rounded-3xl border border-slate-200 bg-white/80 px-6 py-5 shadow-md shadow-slate-900/5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/70 sm:flex-row sm:items-center sm:justify-between sm:px-8 sm:py-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{greeting}</h1>
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">{subtitle}</p>
+    <div
+      className={`rounded-2xl border border-slate-200/70 bg-white/70 shadow-sm shadow-slate-500/10 backdrop-blur ${classnames.layoutPad} flex flex-col gap-4 dark:border-slate-800/70 dark:bg-slate-900/60`}
+    >
+      <div className="space-y-1.5">
+        <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-50">{greeting}</h1>
+        <p className="text-sm text-slate-500 dark:text-slate-400">{subtitle}</p>
       </div>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <Select
@@ -58,7 +61,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-2 dark:focus:ring-offset-slate-950"
+            className={`inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 ${classnames.focusRing}`}
             onClick={onUploadClick}
           >
             <UploadCloud className="h-4 w-4" aria-hidden="true" />
@@ -66,7 +69,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
           </button>
           <button
             type="button"
-            className={`relative inline-flex h-9 w-9 items-center justify-center rounded-2xl border transition focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+            className={`relative inline-flex h-9 w-9 items-center justify-center rounded-xl border transition ${classnames.focusRing} ${
               hasWarnings
                 ? 'border-amber-300 bg-amber-50 text-amber-600 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200'
                 : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
@@ -97,15 +100,15 @@ type SelectProps = {
 
 function Select({ label, icon, value, onChange, options }: SelectProps) {
   return (
-    <label className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:focus-within:ring-indigo-500/40">
-      <span className="inline-flex h-6 w-6 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+    <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm transition focus-within:border-indigo-300 focus-within:ring-1 focus-within:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:focus-within:ring-indigo-500/40">
+      <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
         {icon}
       </span>
       <span className="sr-only">{label}</span>
       <select
         value={value}
         onChange={onChange}
-        className="w-full appearance-none bg-transparent text-xs font-medium text-slate-700 outline-none dark:text-slate-200"
+        className="w-full appearance-none bg-transparent text-sm font-medium text-slate-700 outline-none dark:text-slate-200"
       >
         {options.map(option => (
           <option key={option.id} value={option.id}>
@@ -116,5 +119,4 @@ function Select({ label, icon, value, onChange, options }: SelectProps) {
     </label>
   );
 }
-
 

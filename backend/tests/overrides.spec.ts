@@ -1,7 +1,13 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { makeTestApp, resetDb } from './helpers/test-utils';
 import { insertTransactions } from '../src/db';
+import {
+  clearOverride,
+  ensureOverridesTable,
+  getOverride,
+  setOverride,
+} from '../src/categorization/overrides';
 
 describe('override rules', () => {
   beforeEach(() => {
@@ -33,7 +39,7 @@ describe('override rules', () => {
     );
 
     const response = await request(app)
-      .post('/api/overrides')
+      .post('/api/overrides/rules')
       .send({ txId: 'tx-override-1', categoryId: 'dining_out', scope: 'payee', applyToPast: true })
       .expect(201);
 
@@ -45,5 +51,24 @@ describe('override rules', () => {
 
     expect(updated.category).toBe('dining_out');
     expect(updated.category_rule_id).toContain('user_override:');
+  });
+});
+
+describe('user_overrides store', () => {
+  it('sets, reads, updates, clears', async () => {
+    await ensureOverridesTable();
+    const id = 'txn_abc123';
+    expect(await getOverride(id)).toBeNull();
+    await setOverride(id, 'mobilität.taxi_ridehail');
+    let override = await getOverride(id);
+    expect(override?.category).toBe('mobilität.taxi_ridehail');
+    expect(override?.source).toBe('user');
+
+    await setOverride(id, 'lebensmittel.supermarkt');
+    override = await getOverride(id);
+    expect(override?.category).toBe('lebensmittel.supermarkt');
+
+    await clearOverride(id);
+    expect(await getOverride(id)).toBeNull();
   });
 });

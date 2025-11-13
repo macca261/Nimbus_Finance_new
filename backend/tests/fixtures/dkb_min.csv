@@ -1,0 +1,5 @@
+"Buchungstag";"Wertstellung";"Buchungstext";"Verwendungszweck";"Beguenstigter/Zahlungspflichtiger";"IBAN";"Betrag (EUR)";"Waehrung"
+"01.08.2025";"01.08.2025";"Kartenzahlung";"Einkauf REWE Köln";"";"";"-23,45";"EUR"
+"02.08.2025";"02.08.2025";"SEPA Gutschrift";"Gehalt August 2025";"MUSTER GMBH";"DE02120300000000202051";"2500,00";"EUR"
+
+

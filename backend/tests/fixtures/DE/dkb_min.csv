@@ -1,0 +1,6 @@
+Buchungstag;Wertstellung;Buchungstyp;Auftraggeber / Empfänger;Verwendungszweck;Betrag;Währung
+13.11.2025;13.11.2025;Überweisung;Arbeitgeber;SVWZ+Gehalt Nov;+2200,00;EUR
+14.11.2025;14.11.2025;Kartenzahlung;Amazon;Bestellung 456;-99,99;EUR
+15.11.2025;15.11.2025;Lastschrift;Stromfirma;Rechnung;-120,50;EUR
+
+

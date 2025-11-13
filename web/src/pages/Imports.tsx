@@ -126,10 +126,10 @@ type StatusBadgeProps = {
 function StatusBadge({ status }: StatusBadgeProps) {
   const tone =
     status === 'error'
-      ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-200'
+      ? 'border border-rose-300/70 bg-white/70 text-rose-700 dark:border-rose-600/60 dark:bg-slate-900/60 dark:text-rose-300'
       : status === 'warning'
-      ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-200'
-      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200';
+      ? 'border border-amber-300/70 bg-white/70 text-amber-700 dark:border-amber-600/60 dark:bg-slate-900/60 dark:text-amber-300'
+      : 'border border-emerald-300/70 bg-white/70 text-emerald-700 dark:border-emerald-600/60 dark:bg-slate-900/60 dark:text-emerald-300';
 
   const label = {
     success: 'Erfolgreich',
@@ -138,7 +138,7 @@ function StatusBadge({ status }: StatusBadgeProps) {
   }[status];
 
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${tone}`}>{label}</span>
+    <span className={`inline-flex items-center gap-1 rounded-md px-3 py-1 text-xs font-medium ${tone}`}>{label}</span>
   );
 }
 

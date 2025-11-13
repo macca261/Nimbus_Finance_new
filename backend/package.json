@@ -14,7 +14,12 @@
     "seed": "ts-node scripts/dev/seed.ts",
     "db:reset": "ts-node scripts/dev/reset.ts",
     "db:seed": "ts-node scripts/dev/seed.ts",
-    "smoke": "ts-node scripts/dev/smoke.ts"
+    "smoke": "ts-node scripts/dev/smoke.ts",
+    "debug:paypal": "ts-node ./scripts/debug-paypal.ts",
+    "debug:ing": "ts-node ./scripts/debug-profile.ts ing",
+    "debug:dkb": "ts-node ./scripts/debug-profile.ts dkb",
+    "debug:sparkasse": "ts-node ./scripts/debug-profile.ts sparkasse",
+    "debug:commerzbank": "ts-node ./scripts/debug-profile.ts commerzbank"
   },
   "dependencies": {
     "@nimbus/parser-de": "file:../parser-de",

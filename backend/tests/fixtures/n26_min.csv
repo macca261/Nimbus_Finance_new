@@ -1,0 +1,5 @@
+"Date","Payee","Transaction type","Payment reference","Amount (EUR)","Currency"
+"2025-08-04 12:34","REWE Markt 123","CARD_PAYMENT","KARTE 1234 KÖLN","-8.79","EUR"
+"2025-08-05","ACME GmbH","TRANSFER","Gehalt August","2500.00","EUR"
+
+

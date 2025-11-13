@@ -1,10 +1,39 @@
 import { Router } from 'express';
 import { createOverrideRule } from '../services/overrides';
 import type { CategoryId } from '../types/category';
+import { clearOverride, getOverride, setOverride } from '../categorization/overrides';
 
 export const overridesRouter = Router();
 
-overridesRouter.post('/', (req, res) => {
+overridesRouter.get('/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({ ok: false, code: 'BAD_REQUEST', message: 'id required' });
+  }
+  const override = await getOverride(String(id));
+  return res.json({ ok: true, override });
+});
+
+overridesRouter.post('/', async (req, res) => {
+  const { id, category } = req.body ?? {};
+  if (!id || !category) {
+    return res.status(400).json({ ok: false, code: 'BAD_REQUEST', message: 'id and category required' });
+  }
+  await setOverride(String(id), String(category));
+  const override = await getOverride(String(id));
+  return res.json({ ok: true, override });
+});
+
+overridesRouter.delete('/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!id) {
+    return res.status(400).json({ ok: false, code: 'BAD_REQUEST', message: 'id required' });
+  }
+  await clearOverride(String(id));
+  return res.json({ ok: true });
+});
+
+overridesRouter.post('/rules', (req, res) => {
   try {
     const { txId, categoryId, scope, applyToPast } = req.body ?? {};
     if (!txId || typeof txId !== 'string') {

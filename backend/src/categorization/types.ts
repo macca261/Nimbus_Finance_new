@@ -3,7 +3,7 @@ import type { CategoryId } from '../types/category';
 import type { Transaction } from '../types/core';
 import type { NimbusCategoryId } from './taxonomy';
 
-export type CategorySource = 'rule' | 'ml' | 'user' | 'ai' | 'unknown';
+export type CategorySource = 'rule' | 'ml' | 'user' | 'fallback' | 'ai' | 'unknown';
 
 export interface CategorizedTransaction extends ParsedRow {
   category?: NimbusCategoryId;
@@ -11,6 +11,7 @@ export interface CategorizedTransaction extends ParsedRow {
   categorySource?: CategorySource;
   merchant?: string;
   normalizedDescription?: string;
+  categoryHint?: string | null;
 }
 
 export interface CategoryRule {
