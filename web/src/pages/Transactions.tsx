@@ -91,6 +91,8 @@ export const Transactions: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  // Review mode derived from initial URL: low-confidence filter
+  const [lowConfidenceReview, setLowConfidenceReview] = useState<boolean>(initialReview === 'low-confidence');
   const [filters, setFilters] = useState({
     search: '',
     category: initialCategory ?? 'all',
@@ -218,12 +220,19 @@ export const Transactions: React.FC = () => {
     }
     
     // Apply "showOnlyOther" filter
+    let out = results;
     if (filters.showOnlyOther) {
-      return results.filter(tx => tx.category === 'other' || tx.category === 'other_review');
+      out = out.filter(tx => tx.category === 'other' || tx.category === 'other_review');
     }
-    
-    return results;
-  }, [items, filters.showOnlyOther]);
+    // Apply low-confidence review filter if enabled from URL on initial mount
+    if (lowConfidenceReview) {
+      out = out.filter(tx => {
+        const c = typeof tx.categoryConfidence === 'number' ? tx.categoryConfidence : null;
+        return c !== null && c < 0.4;
+      });
+    }
+    return out;
+  }, [items, filters.showOnlyOther, lowConfidenceReview]);
   
   const otherCount = useMemo(() => {
     return items.filter(tx => tx.category === 'other' || tx.category === 'other_review').length;
@@ -450,6 +459,11 @@ export const Transactions: React.FC = () => {
 
         <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-soft dark:border-slate-800 dark:bg-slate-900">
           <div className="overflow-x-auto">
+            {lowConfidenceReview && (
+              <div className="px-4 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:border-amber-500/30">
+                Niedrige Confidence – zeige nur Buchungen mit geringer Zuverlässigkeit der Kategorie.
+              </div>
+            )}
             <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
               <thead className="bg-slate-100/80 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
                 <tr>

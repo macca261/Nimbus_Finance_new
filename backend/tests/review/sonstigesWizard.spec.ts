@@ -70,6 +70,48 @@ describe('Sonstiges Cleanup Wizard', () => {
     // A rule should have been created
     expect(apply.body?.ruleId).toBeTruthy();
   });
+
+  it('returns preview transactions for a group and respects totals', async () => {
+    // Group C (same merchant)
+    insertTx({ purpose: 'Cafe Latte', counterpartName: 'COFFEECO', payee: 'COFFEECO', amountCents: -500 });
+    insertTx({ purpose: 'COFFEECo cappuccino', counterpartName: 'COFFEECO', payee: 'COFFEECO', amountCents: -450 });
+    insertTx({ purpose: 'CoffeeCo Espresso', counterpartName: 'COFFEECO', payee: 'COFFEECO', amountCents: -300 });
+    // Different merchant
+    insertTx({ purpose: 'Baeckerei', counterpartName: 'BAKERY', payee: 'BAKERY', amountCents: -200 });
+
+    const summary = await request(app).get('/api/review/sonstiges-summary?days=365').expect(200);
+    const groups: any[] = summary.body?.groups ?? [];
+    const coffee = groups.find(g => (g.displayName || '').toUpperCase().includes('COFFEE')) || groups[0];
+
+    const prev = await request(app).get(`/api/review/sonstiges/group/${encodeURIComponent(coffee.groupId)}/transactions?limit=2`).expect(200);
+    expect(Array.isArray(prev.body?.transactions)).toBe(true);
+    expect(prev.body?.transactions.length).toBeLessThanOrEqual(2);
+    expect(prev.body?.totalCount).toBeGreaterThanOrEqual(3);
+    expect(prev.body?.totalExpenseCents).toBeGreaterThanOrEqual(1250);
+  });
+
+  it('rule conflict returns 409 and does not update transactions', async () => {
+    // Seed
+    insertTx({ purpose: 'Shop XYZ', counterpartName: 'SHOPXYZ', payee: 'SHOPXYZ', amountCents: -1000 });
+    insertTx({ purpose: 'Shop XYZ 2', counterpartName: 'SHOPXYZ', payee: 'SHOPXYZ', amountCents: -2000 });
+
+    const summary = await request(app).get('/api/review/sonstiges-summary?days=365').expect(200);
+    const group = (summary.body?.groups ?? [])[0];
+    expect(group).toBeTruthy();
+
+    // Create an existing rule that would conflict
+    db.prepare(`INSERT INTO user_override_rules (id, patternType, pattern, categoryId, applyToPast) VALUES (?, 'payee', ?, 'groceries', 0)`)
+      .run('rule-1', group.groupId);
+
+    const resp = await request(app)
+      .post('/api/review/sonstiges/apply')
+      .send({ groupId: group.groupId, categoryId: 'groceries', createRule: true, applyToPast: false })
+      .expect(409);
+    expect(resp.body?.error).toBe('rule_conflict');
+    const rows = db.prepare(`SELECT category FROM transactions WHERE payee = 'SHOPXYZ'`).all() as any[];
+    // Still uncategorized
+    expect(rows.every(r => !r.category || r.category === 'other' || r.category === 'other_review')).toBe(true);
+  });
 });
 
 

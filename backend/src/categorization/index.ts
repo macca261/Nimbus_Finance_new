@@ -381,6 +381,10 @@ export function categorize(input: CategorizeInput): CategorizeResult {
       source: input.source ?? null,
       transaction: input.transaction,
     },
+    // Pass internal transfer flags from transaction to engine
+    isInternalTransfer: (input.transaction as any)?.isInternalTransfer ?? false,
+    internalTransferKind: (input.transaction as any)?.internalTransferKind ?? null,
+    internalTransferDirection: (input.transaction as any)?.internalTransferDirection ?? null,
   };
 
   const categorized = categorizeTransaction(syntheticRow);

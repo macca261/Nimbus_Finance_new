@@ -129,6 +129,19 @@ export function mountReviewRoutes(router: Router) {
       if (typeof groupId !== 'string' || !groupId.trim()) return res.status(400).json({ ok: false, error: 'groupId required' });
       if (typeof categoryId !== 'string' || !categoryId.trim()) return res.status(400).json({ ok: false, error: 'categoryId required' });
 
+      // If rule creation requested, check for existing conflicting rule first
+      if (createRule) {
+        const existing = db.prepare(`SELECT id, categoryId FROM user_override_rules WHERE patternType = 'payee' AND pattern = ? LIMIT 1`).get(groupId) as { id?: string; categoryId?: string } | undefined;
+        if (existing && existing.id) {
+          return res.status(409).json({
+            error: 'rule_conflict',
+            message: 'Es existiert bereits eine Regel für diesen Händler.',
+            existingRuleId: existing.id,
+            existingCategoryId: existing.categoryId ?? null,
+          });
+        }
+      }
+
       // Recompute matching tx for this group using same logic
       const rows = db.prepare(`
         SELECT id, purpose, counterpartName, payee, memo, bookingDate, amountCents
@@ -189,6 +202,53 @@ export function mountReviewRoutes(router: Router) {
     } catch (e: any) {
       console.error('[review] sonstiges apply failed', e);
       return res.status(500).json({ ok: false, error: 'apply failed' });
+    }
+  });
+
+  // GET /api/review/sonstiges/group/:groupId/transactions?limit=20
+  router.get('/api/review/sonstiges/group/:groupId/transactions', (req: Request, res: Response) => {
+    try {
+      const db = (req.app as any).locals?.db as Database | undefined;
+      if (!db) return res.status(500).json({ error: 'db unavailable' });
+      const groupId = String(req.params.groupId || '').trim();
+      if (!groupId) return res.status(400).json({ error: 'groupId required' });
+      const limitParam = Number.parseInt(String((req.query as any)?.limit ?? '20'), 10);
+      const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 50) : 20;
+
+      const candidates = db.prepare(`
+        SELECT id, bookingDate, amountCents, purpose, memo, payee, counterpartName, category, category_source AS categorySource
+        FROM transactions
+        WHERE amountCents < 0
+          AND (category = 'other' OR category = 'other_review' OR category IS NULL OR TRIM(category) = '')
+          AND (isRefund = 0 OR isRefund IS NULL)
+          AND (isRefunded = 0 OR isRefunded IS NULL)
+          AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+          AND (isReimbursement = 0 OR isReimbursement IS NULL)
+          AND (isPassThrough = 0 OR isPassThrough IS NULL)
+        ORDER BY bookingDate DESC
+      `).all() as Array<{ id: number; bookingDate: string; amountCents: number; purpose?: string | null; memo?: string | null; payee?: string | null; counterpartName?: string | null; category?: string | null; categorySource?: string | null }>;
+
+      const filtered = candidates.filter(r => {
+        const displayRaw = (r.payee ?? r.counterpartName ?? r.purpose ?? r.memo ?? '').trim();
+        const normalized = normalizeMerchantNameForFuzzy(displayRaw || (r.purpose ?? '') || '');
+        return normalized && normalized === groupId;
+      });
+
+      const totalCount = filtered.length;
+      const totalExpenseCents = filtered.reduce((acc, r) => acc + Math.abs(r.amountCents || 0), 0);
+      const transactions = filtered.slice(0, limit).map(r => ({
+        id: String(r.id),
+        bookingDate: r.bookingDate,
+        amountCents: Math.trunc(r.amountCents ?? 0),
+        description: (r.memo ?? r.purpose ?? '') || (r.payee ?? r.counterpartName ?? '') || '',
+        currentCategoryId: (r.category ?? null),
+        categorySource: (r.categorySource ?? null),
+      }));
+
+      return res.json({ transactions, totalCount, totalExpenseCents });
+    } catch (e: any) {
+      console.error('[review] sonstiges group preview failed', e);
+      return res.status(500).json({ error: 'preview failed' });
     }
   });
 }

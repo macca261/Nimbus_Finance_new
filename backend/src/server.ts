@@ -17,6 +17,8 @@ import devResetRouter from './routes/dev-reset';
 import { mountAdminRoutes } from './routes/admin';
 import adminImportsRouter from './routes/admin-imports';
 import normalizerRouter from './routes/normalizer';
+import debugRouter from './routes/debug';
+import { accountsRouter } from './routes/accounts';
 import { mountReviewRoutes } from './routes/review';
 import { mountCategoryRoutes } from './routes/categories';
 import os from 'node:os';
@@ -175,11 +177,10 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   app.use('/api/paypal', paypalRouter);
   app.use('/api/overrides', overridesRouter);
   app.use('/api/transactions', transactionsRouter);
-  // Accounts router
-  const { accountsRouter } = require('./routes/accounts');
   app.use('/api/accounts', accountsRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/normalizer', normalizerRouter);
+  app.use('/api/debug', debugRouter);
   app.use('/api/admin/imports', adminImportsRouter);
   mountReviewRoutes(app);
   console.log('Mounted: /api/review/transactions');

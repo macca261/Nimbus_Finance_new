@@ -49,6 +49,23 @@ export const AccountsPage: React.FC = () => {
     };
   }, []);
 
+  const onAddAccount = async () => {
+    try {
+      const res = await fetch('/api/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Neues Konto', iban: '', role: 'spending' }),
+      });
+      if (!res.ok) throw new Error('Konto konnte nicht erstellt werden.');
+      const json = await res.json();
+      const acc = json?.account as ApiAccount;
+      setItems(prev => [acc, ...prev]);
+      toast('Konto hinzugefügt', 'success');
+    } catch (e: any) {
+      toast(e?.message || 'Konto konnte nicht erstellt werden.', 'error');
+    }
+  };
+
   const onRoleChange = async (acc: ApiAccount, next: AccountRole) => {
     const prev = acc.role ?? 'spending';
     setItems(list => list.map(a => (a.id === acc.id ? { ...a, role: next } : a)));
@@ -109,6 +126,27 @@ export const AccountsPage: React.FC = () => {
       return (
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
           <div className="text-sm text-rose-600 dark:text-rose-400">{error}</div>
+        </div>
+      );
+    }
+    if (items.length === 0) {
+      return (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm text-slate-600 dark:text-slate-300">Noch keine Konten angelegt.</div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Füge ein Konto hinzu oder importiere Buchungen, damit Nimbus Konten erkennen kann.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onAddAccount}
+              className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:focus:ring-indigo-500/40"
+            >
+              Konto hinzufügen
+            </button>
+          </div>
         </div>
       );
     }
@@ -193,6 +231,15 @@ export const AccountsPage: React.FC = () => {
             <p className="text-sm text-slate-500 dark:text-slate-400">
               Verwalte Namen und Rollen deiner Konten. Rollen helfen bei der Erkennung interner Überträge.
             </p>
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={onAddAccount}
+              className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:bg-indigo-500 dark:hover:bg-indigo-400 dark:focus:ring-indigo-500/40"
+            >
+              Konto hinzufügen
+            </button>
           </div>
         </header>
         {content}

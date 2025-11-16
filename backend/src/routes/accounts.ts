@@ -39,8 +39,15 @@ accountsRouter.post('/', (req, res) => {
   try {
     const db = getConnection(req);
     const { id, iban, name, role } = req.body || {};
-    const accountId = typeof id === 'string' && id.trim() ? id.trim() : null;
-    if (!accountId) return res.status(400).json({ error: 'id is required' });
+    // Allow server-side id generation when not provided
+    let accountId = typeof id === 'string' && id.trim() ? id.trim() : null;
+    if (!accountId) {
+      try {
+        accountId = require('node:crypto').randomUUID();
+      } catch {
+        accountId = String(Date.now());
+      }
+    }
     const roleVal: AccountRole = isValidRole(role) ? role : 'spending';
     const stmt = db.prepare(`INSERT INTO accounts (id, iban, name, role) VALUES (?, ?, ?, ?)`);
     stmt.run(accountId, typeof iban === 'string' ? iban : null, typeof name === 'string' ? name : null, roleVal);

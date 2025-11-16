@@ -403,5 +403,97 @@ describe('Real-world comdirect categorization (Aaron\'s sample rows)', () => {
       expect(result.categoryConfidence).toBeLessThanOrEqual(0.4);
     }
   });
+
+  // ============================================
+  // REGRESSION TESTS: Internal transfers and salary mislabeled as Transport
+  // ============================================
+
+  it('categorizes transfer to Aaron (savings IBAN) as internal transfer, NOT transport (unit test)', () => {
+    const row: ParsedRow = {
+      bookingDate: '2025-09-15',
+      amountCents: -270000, // -2700 EUR
+      rawText: 'Übertrag / Überweisung | Empfänger: Aaron McIntoshKto/IBAN: DE32200411770270381700 BLZ/BIC: COBADEHD077 Ref. 5I2C21PU02U8S56E/42431',
+      counterparty: 'Aaron McIntosh',
+      direction: 'out',
+      accountId: 'account:giro',
+      currency: 'EUR',
+      reference: null,
+      mcc: null,
+      accountIban: 'DE12345678901234567890',
+      counterpartyIban: 'DE32200411770270381700',
+      externalId: null,
+      normalizedText: undefined,
+      categorySystem: undefined,
+      raw: {},
+      isInternalTransfer: true, // Simulate that internal transfer matcher already set this
+      internalTransferKind: 'savings',
+      internalTransferDirection: 'out',
+    };
+    
+    const result = categorizeTransaction(row);
+    
+    // Must be an internal transfer category, NOT transport
+    expect(result.category).toMatch(/^internal:transfer/);
+    expect(result.category.startsWith('transport')).toBe(false);
+    expect(result.categorySource).toBe('system');
+    expect(result.categoryRuleId).toMatch(/internal_transfer/);
+  });
+
+  it('categorizes transfer to Rukiye as internal transfer, NOT transport (unit test)', () => {
+    const row: ParsedRow = {
+      bookingDate: '2025-09-16',
+      amountCents: -55600, // -556 EUR
+      rawText: 'Übertrag / Überweisung | Empfänger: Rukiye AksoyKto/IBAN: DE93370501980012173696 BLZ/BIC: COLSDE33XXX Ref. 9Q2C21PU3JKASIIY/1734',
+      counterparty: 'Rukiye Aksoy',
+      direction: 'out',
+      accountId: 'account:giro',
+      currency: 'EUR',
+      reference: null,
+      mcc: null,
+      accountIban: 'DE12345678901234567890',
+      counterpartyIban: 'DE93370501980012173696',
+      externalId: null,
+      normalizedText: undefined,
+      categorySystem: undefined,
+      raw: {},
+      isInternalTransfer: true, // Simulate that internal transfer matcher already set this
+      internalTransferKind: 'other',
+      internalTransferDirection: 'out',
+    };
+    
+    const result = categorizeTransaction(row);
+    
+    // Must be an internal transfer category, NOT transport
+    expect(result.category).toMatch(/^internal:transfer/);
+    expect(result.category.startsWith('transport')).toBe(false);
+    expect(result.categorySource).toBe('system');
+  });
+
+  it('categorizes salary from AMORIA BOND as income:salary, NOT transport (unit test)', () => {
+    const row: ParsedRow = {
+      bookingDate: '2025-09-30',
+      amountCents: 310100, // +3101 EUR
+      rawText: 'Übertrag / Überweisung | Auftraggeber: AMORIA BOND GMBH Buchungstext: Lohn / Gehalt 09/2025 Ref. AC2C21PT3OKI0AWJ/84479',
+      counterparty: 'AMORIA BOND GMBH',
+      direction: 'in',
+      accountId: 'account:giro',
+      currency: 'EUR',
+      reference: null,
+      mcc: null,
+      accountIban: 'DE12345678901234567890',
+      counterpartyIban: null,
+      externalId: null,
+      normalizedText: undefined,
+      categorySystem: undefined,
+      raw: {},
+    };
+    
+    const result = categorizeTransaction(row);
+    
+    // Must be income:salary, NOT transport
+    expect(result.category).toBe('income:salary');
+    expect(result.category.startsWith('transport')).toBe(false);
+    expect(result.categoryConfidence).toBeGreaterThanOrEqual(0.85);
+  });
 });
 

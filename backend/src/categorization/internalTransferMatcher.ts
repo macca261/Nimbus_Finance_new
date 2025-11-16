@@ -192,9 +192,13 @@ export function findInternalTransferPair(
 }
 
 /**
- * Single-sided classification heuristic for savings transfers:
- * If an outgoing transfer on a spending account goes to a counterparty IBAN that
- * belongs to a savings account of the same user, mark it as internal savings transfer.
+ * Single-sided classification heuristic for internal transfers:
+ * If an outgoing transfer goes to a counterparty IBAN that belongs to one of the user's accounts,
+ * mark it as an internal transfer.
+ * 
+ * Priority:
+ * 1. Savings/wallet accounts → kind = 'savings' or 'wallet'
+ * 2. Any other account in accounts table → kind = 'other'
  */
 export function classifySingleSidedSavingsTransfer(
   row: NormalizedCanonicalRow,
@@ -205,9 +209,38 @@ export function classifySingleSidedSavingsTransfer(
   if (row.isRefund || row.isRefunded || row.refundGroupId) return null;
   if (row.isInternalTransfer || row.internalTransferGroupId) return null;
   if (row.amountCents >= 0) return null; // only outgoing
+  
+  // Must have transfer keywords in the text (check purpose, not just counterpartName)
+  const purposeText = (row.purpose ?? '').toUpperCase();
+  const counterpartText = (row.counterpartName ?? '').toUpperCase();
+  const combinedText = `${purposeText} ${counterpartText}`.trim();
+  if (!hasInternalTransferKeywords(combinedText)) {
+    return null;
+  }
+  
   const accountRole = row.accountId ? roleById[row.accountId] : undefined;
   const counterIban = row.counterpartyIban || null;
   const counterRole = counterIban ? roleByIban[counterIban] : undefined;
+  
+  // If counterparty IBAN is in accounts table, it's an internal transfer
+  if (counterRole) {
+    let kind: InternalTransferKind = 'other';
+    if (counterRole === 'savings') {
+      kind = 'savings';
+    } else if (counterRole === 'wallet') {
+      kind = 'wallet';
+    }
+    
+    return {
+      ...row,
+      isInternalTransfer: true,
+      internalTransferDirection: 'out',
+      internalTransferKind: kind,
+      internalTransferGroupId: row.internalTransferGroupId ?? `int_single_${row.publicId}`,
+    };
+  }
+  
+  // Legacy: spending -> savings/wallet (for backwards compatibility)
   if (accountRole === 'spending' && (counterRole === 'savings' || counterRole === 'wallet')) {
     const kind = (counterRole === 'wallet') ? 'wallet' : 'savings';
     return {
@@ -218,6 +251,7 @@ export function classifySingleSidedSavingsTransfer(
       internalTransferGroupId: row.internalTransferGroupId ?? `int_single_${row.publicId}`,
     };
   }
+  
   return null;
 }
 

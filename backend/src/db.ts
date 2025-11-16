@@ -9,7 +9,7 @@ import type { NormalizedTransaction } from './types/transactions';
 import type { CategoryId } from './types/category';
 import { findMatchingOverride } from './overrides/userOverrides';
 import { findRefundPair, linkRefundPair } from './categorization/refundMatcher';
-import { findInternalTransferPair, applyInternalTransferFlags } from './categorization/internalTransferMatcher';
+import { findInternalTransferPair, applyInternalTransferFlags, classifySingleSidedSavingsTransfer } from './categorization/internalTransferMatcher';
 import { findReimbursementMatchForIncome, applyReimbursementFlags } from './categorization/reimbursementMatcher';
 import { buildCategorizationExplanation } from './categorization/explanation';
 
@@ -206,6 +206,12 @@ export function ensureSchema(db: Database) {
       db.exec(`ALTER TABLE accounts ADD COLUMN role TEXT DEFAULT 'spending'`);
     }
   } catch {}
+  // Seed accounts from existing transactions (idempotent)
+  try {
+    seedAccountsFromExistingTransactions(db);
+  } catch (e) {
+    console.warn('[migrate] account seeding skipped:', (e as Error)?.message || e);
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS user_override_rules (
@@ -776,30 +782,6 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       recentTransactionsMap.set(accountId, normalizedRecent);
     }
     
-    // Categorize rows that don't have categories yet
-    for (const base of normalizedBatch) {
-      if (!base.category) {
-        const overrideMatch = findMatchingOverride(base.transactionPayload, overrideRules);
-        const result = categorize({
-          text: base.transactionPayload.memo ?? base.transactionPayload.payee ?? base.purpose,
-          amount: base.transactionPayload.amountCents / 100,
-          amountCents: base.transactionPayload.amountCents,
-          iban: base.transactionPayload.raw?.accountIban ? String(base.transactionPayload.raw.accountIban) : null,
-          counterpart: base.transactionPayload.counterparty ?? null,
-          memo: base.transactionPayload.memo,
-          payee: base.transactionPayload.payee ?? null,
-          source: base.transactionPayload.source,
-          transaction: base.transactionPayload,
-          overrideMatch: overrideMatch ? { ruleId: overrideMatch.rule.id, categoryId: overrideMatch.categoryId } : undefined,
-        });
-        base.category = result.category;
-        base.categorySource = result.source;
-        base.categoryConfidence = result.confidence;
-        base.categoryExplanation = result.explanation ?? null;
-        base.categoryRuleId = result.ruleId ?? null;
-      }
-    }
-    
     // Now try refund matching for each row
     for (const base of normalizedBatch) {
       // Try to find a refund pair
@@ -850,7 +832,8 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       }
     }
     
-    // Now try internal transfer matching for each row (after refund matching)
+    // Now try internal transfer matching for each row (after refund matching, BEFORE categorization)
+    // This must happen before categorization so the engine can see isInternalTransfer flags
     // For internal transfers, we need to check ALL accounts, not just the ones in the current batch
     // because internal transfers are between different accounts
     // Fetch recent transactions for internal transfer matching (last 30 days, smaller window)
@@ -973,7 +956,8 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       const allCandidates: NormalizedCanonicalRow[] = [...allRecentForInternalTransfers, ...otherBatchRows];
       
       // Build account role maps (by accountId and by IBAN)
-      const accountRows = (db.prepare(`SELECT id, iban, role FROM accounts`).all() as Array<{ id: string; iban?: string | null; role?: string | null }>) || [];
+      // Use conn (transaction connection) instead of db to ensure we see the latest data
+      const accountRows = (conn.prepare(`SELECT id, iban, role FROM accounts`).all() as Array<{ id: string; iban?: string | null; role?: string | null }>) || [];
       const roleById: Record<string, any> = {};
       const roleByIban: Record<string, any> = {};
       for (const ar of accountRows) {
@@ -1023,33 +1007,62 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
           }
         }
       } else {
-        // Single-sided savings detection (outgoing spending -> savings IBAN)
-        const maybe = require('./categorization/internalTransferMatcher') as any;
-        const single = maybe.classifySingleSidedSavingsTransfer
-          ? maybe.classifySingleSidedSavingsTransfer(base, { accountRoleById: roleById, accountRoleByIban: roleByIban })
-          : null;
-        if (single && single.isInternalTransfer && single.internalTransferKind === 'savings') {
+        // Single-sided internal transfer detection (outgoing to any account in accounts table)
+        const single = classifySingleSidedSavingsTransfer(base, { accountRoleById: roleById, accountRoleByIban: roleByIban });
+        if (single && single.isInternalTransfer) {
           base.isInternalTransfer = true;
-          base.internalTransferDirection = 'out';
-          base.internalTransferKind = 'savings';
+          base.internalTransferDirection = single.internalTransferDirection;
+          base.internalTransferKind = single.internalTransferKind;
           base.internalTransferGroupId = single.internalTransferGroupId;
           // Persist
           updateInternalTransferStmt.run({
             publicId: base.publicId,
             isInternalTransfer: 1,
-            internalTransferDirection: 'out',
-            internalTransferKind: 'savings',
+            internalTransferDirection: base.internalTransferDirection,
+            internalTransferKind: base.internalTransferKind,
             internalTransferGroupId: base.internalTransferGroupId,
           });
           if (process.env.NODE_ENV !== 'production') {
-            console.log('[internalTransferMatcher] single-sided savings', {
+            console.log('[internalTransferMatcher] single-sided internal transfer', {
               amountCents: base.amountCents,
               accountId: base.accountId,
               counterpartyIban: base.counterpartyIban,
+              kind: base.internalTransferKind,
               groupId: base.internalTransferGroupId,
             });
           }
         }
+      }
+    }
+    
+    // Categorize rows that don't have categories yet (AFTER internal transfer matching)
+    // The categorization engine will see isInternalTransfer flags and apply internal transfer categories
+    for (const base of normalizedBatch) {
+      if (!base.category) {
+        const overrideMatch = findMatchingOverride(base.transactionPayload, overrideRules);
+        const result = categorize({
+          text: base.transactionPayload.memo ?? base.transactionPayload.payee ?? base.purpose,
+          amount: base.transactionPayload.amountCents / 100,
+          amountCents: base.transactionPayload.amountCents,
+          iban: base.transactionPayload.raw?.accountIban ? String(base.transactionPayload.raw.accountIban) : null,
+          counterpart: base.transactionPayload.counterparty ?? null,
+          memo: base.transactionPayload.memo,
+          payee: base.transactionPayload.payee ?? null,
+          source: base.transactionPayload.source,
+          transaction: {
+            ...base.transactionPayload,
+            // Pass internal transfer flags to categorization engine
+            isInternalTransfer: base.isInternalTransfer ?? false,
+            internalTransferKind: base.internalTransferKind ?? null,
+            internalTransferDirection: base.internalTransferDirection ?? null,
+          },
+          overrideMatch: overrideMatch ? { ruleId: overrideMatch.rule.id, categoryId: overrideMatch.categoryId } : undefined,
+        });
+        base.category = result.category;
+        base.categorySource = result.source;
+        base.categoryConfidence = result.confidence;
+        base.categoryExplanation = result.explanation ?? null;
+        base.categoryRuleId = result.ruleId ?? null;
       }
     }
     
@@ -1224,21 +1237,24 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
     }
     
     // Apply internal categories for internal transfers (do not override refunds/reimbursements/pass-through)
+    // Note: The categorization engine should have already set the category via the internal transfer override,
+    // but we ensure it here as a safety net
     for (const base of normalizedBatch) {
       if (base.isInternalTransfer && !base.isRefund && !base.isRefunded && !base.isReimbursement) {
         const cat = (base.category ?? '').trim();
-        const isInternalCat = cat.startsWith('internal:');
-        if (!isInternalCat) {
+        // Check if it's already an internal transfer category (new format: internal:transfer_*)
+        const isInternalTransferCat = cat.startsWith('internal:transfer_');
+        if (!isInternalTransferCat) {
           let categoryId: CategoryId;
           switch (base.internalTransferKind) {
             case 'savings':
-              categoryId = 'internal:savings' as any;
+              categoryId = 'internal:transfer_savings' as any;
               break;
             case 'wallet':
-              categoryId = 'internal:wallet' as any;
+              categoryId = 'internal:transfer_wallet' as any;
               break;
             default:
-              categoryId = 'internal:own-account' as any;
+              categoryId = 'internal:transfer_other' as any;
           }
           (base as any).category = categoryId;
           (base as any).categorySource = 'system';
@@ -1299,6 +1315,28 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       if ((info as any).changes === 1) inserted++;
       else duplicates++;
     }
+    // After batch insert, opportunistically seed accounts for any new account keys present in this batch
+    try {
+      const keys: Array<{ accountId?: string | null; accountIban?: string | null }> = [];
+      for (const b of normalizedBatch) {
+        keys.push({ accountId: b.accountId ?? null, accountIban: b.accountIban ?? null });
+      }
+      const distinct = new Map<string, { accountId?: string | null; accountIban?: string | null }>();
+      for (const k of keys) {
+        const id = (k.accountId && k.accountId.trim()) ? k.accountId.trim() : (k.accountIban && k.accountIban.trim()) ? k.accountIban.trim() : null;
+        if (!id) continue;
+        if (!distinct.has(id)) distinct.set(id, k);
+      }
+      if (distinct.size > 0) {
+        const insertAcc = conn.prepare(`INSERT OR IGNORE INTO accounts (id, iban, name, role) VALUES (?, ?, ?, 'spending')`);
+        for (const [id, k] of distinct) {
+          const iban = k.accountIban && k.accountIban.trim() ? k.accountIban.trim() : null;
+          const suffix = iban ? iban.slice(-4) : id.slice(-4);
+          const name = `Konto ${suffix}`;
+          insertAcc.run(id, iban, name);
+        }
+      }
+    } catch {}
   });
 
   try { console.log('[insert] starting tx, rows=' + rows.length); } catch {}
@@ -1326,6 +1364,32 @@ export function getBalance(conn: Database = db) {
 
 export function clearAll(conn: Database = db) {
   conn.exec(`DELETE FROM transactions`)
+}
+
+// Seed accounts table based on distinct accounts seen in transactions
+export function seedAccountsFromExistingTransactions(conn: Database = db): void {
+  // Collect distinct account keys from transactions
+  const rows = conn.prepare(`
+    SELECT DISTINCT
+      COALESCE(NULLIF(TRIM(accountId), ''), NULL) AS accountId,
+      COALESCE(NULLIF(TRIM(accountIban), ''), NULL) AS accountIban
+    FROM transactions
+    WHERE (accountId IS NOT NULL AND TRIM(accountId) <> '')
+       OR (accountIban IS NOT NULL AND TRIM(accountIban) <> '')
+  `).all() as Array<{ accountId?: string | null; accountIban?: string | null }>;
+  if (!rows || rows.length === 0) return;
+  const insert = conn.prepare(`INSERT OR IGNORE INTO accounts (id, iban, name, role) VALUES (?, ?, ?, 'spending')`);
+  const tx = conn.transaction((batch: typeof rows) => {
+    for (const r of batch) {
+      const id = (r.accountId && r.accountId.trim()) ? r.accountId.trim() : (r.accountIban && r.accountIban.trim()) ? r.accountIban.trim() : null;
+      if (!id) continue;
+      const iban = r.accountIban && r.accountIban.trim() ? r.accountIban.trim() : null;
+      const suffix = iban ? iban.slice(-4) : id.slice(-4);
+      const name = `Konto ${suffix}`;
+      insert.run(id, iban, name);
+    }
+  });
+  tx(rows);
 }
 
 // Backfill helper to set internal categories for existing internal transfers
