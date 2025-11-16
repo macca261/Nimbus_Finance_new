@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   UploadCloud,
   SlidersHorizontal,
+  AlertCircle,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import ThemeToggle from '../ThemeToggle';
@@ -28,6 +29,7 @@ const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/imports', label: 'Daten & Uploads', icon: UploadCloud },
   { to: '/transactions', label: 'Transaktionen', icon: CreditCard },
+  { to: '/review', label: 'Überprüfung', icon: AlertCircle },
   { to: '/budgets', label: 'Budgets', icon: Target },
   { to: '/goals', label: 'Goals', icon: Sparkles },
   { to: '/accounts', label: 'Accounts', icon: Wallet },
@@ -110,20 +112,39 @@ export default function Sidebar({ status, open, onClose }: SidebarProps) {
 
           <div className="mt-6 space-y-1.5">
             <p className="px-3.5 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
-              Admin
+              Settings
             </p>
             <Link
-              to="/admin/normalizer"
+              to="/settings/normalizer"
               onClick={onClose}
               className={`flex items-center gap-3 rounded-xl px-3.5 py-2 text-sm transition ${classnames.focusRing} ${
-                pathname === '/admin/normalizer'
+                pathname === '/settings/normalizer'
                   ? 'bg-indigo-50 text-indigo-700 dark:bg-slate-900/80 dark:text-indigo-200'
                   : 'text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-900/60'
               }`}
-              aria-current={pathname === '/admin/normalizer' ? 'page' : undefined}
+              aria-current={pathname === '/settings/normalizer' ? 'page' : undefined}
             >
               <SlidersHorizontal className="h-4 w-4" />
               <span>Normalizer</span>
+            </Link>
+          </div>
+
+          <div className="mt-6 space-y-1.5">
+            <p className="px-3.5 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              Admin
+            </p>
+            <Link
+              to="/admin/imports"
+              onClick={onClose}
+              className={`flex items-center gap-3 rounded-xl px-3.5 py-2 text-sm transition ${classnames.focusRing} ${
+                pathname === '/admin/imports'
+                  ? 'bg-indigo-50 text-indigo-700 dark:bg-slate-900/80 dark:text-indigo-200'
+                  : 'text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-900/60'
+              }`}
+              aria-current={pathname === '/admin/imports' ? 'page' : undefined}
+            >
+              <UploadCloud className="h-4 w-4" />
+              <span>Imports</span>
             </Link>
           </div>
         </nav>

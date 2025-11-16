@@ -13,6 +13,7 @@ function fingerprint(row: ParsedRow, profileId: string): string {
     (row.counterparty ?? '').trim().toLowerCase(),
     (row.counterpartyIban ?? '').replace(/\s+/g, '').toUpperCase(),
     row.rawText.trim().toLowerCase(),
+    row.bankReferenceId ?? '', // Include bank reference ID in fingerprint for better dedup
   ];
   const data = parts.join('|');
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -76,6 +77,7 @@ export function toNormalizedTransaction(
     transferLinkId: null,
     confidence: category.confidence,
     metadata: undefined,
+    bankReferenceId: row.bankReferenceId ?? null,
   };
 }
 

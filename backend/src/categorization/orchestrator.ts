@@ -1,5 +1,6 @@
 import type { ParsedRow } from '../parser/types';
-import { SYSTEM_RULES } from './rules';
+// Import from rulesRuntime to avoid circular dependencies
+import { SYSTEM_RULES } from './rulesRuntime';
 import { SYSTEM_MERCHANT_PATTERNS } from './merchantPatterns';
 import { categorizeWithRules } from './engine';
 import type {

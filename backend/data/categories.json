@@ -1,0 +1,87 @@
+[
+  {
+    "id": "income",
+    "parentId": null,
+    "type": "income",
+    "labels": { "de": "Einnahmen", "en": "Income" }
+  },
+  {
+    "id": "salary",
+    "parentId": "income",
+    "type": "income",
+    "labels": { "de": "Gehalt", "en": "Salary" }
+  },
+  {
+    "id": "housing",
+    "parentId": null,
+    "type": "expense",
+    "labels": { "de": "Wohnen", "en": "Housing" }
+  },
+  {
+    "id": "rent",
+    "parentId": "housing",
+    "type": "expense",
+    "labels": { "de": "Miete", "en": "Rent" }
+  },
+  {
+    "id": "groceries",
+    "parentId": null,
+    "type": "expense",
+    "labels": { "de": "Lebensmittel", "en": "Groceries" }
+  },
+  {
+    "id": "groceries_supermarket",
+    "parentId": "groceries",
+    "type": "expense",
+    "labels": { "de": "Supermarkt", "en": "Supermarket" }
+  },
+  {
+    "id": "transport",
+    "parentId": null,
+    "type": "expense",
+    "labels": { "de": "Transport", "en": "Transport" }
+  },
+  {
+    "id": "transport_public",
+    "parentId": "transport",
+    "type": "expense",
+    "labels": { "de": "ÖPNV", "en": "Public transport" }
+  },
+  {
+    "id": "restaurants",
+    "parentId": null,
+    "type": "expense",
+    "labels": { "de": "Restaurants & Bars", "en": "Restaurants & Bars" }
+  },
+  {
+    "id": "subscriptions",
+    "parentId": null,
+    "type": "expense",
+    "labels": { "de": "Abos & Verträge", "en": "Subscriptions & Contracts" }
+  },
+  {
+    "id": "fees",
+    "parentId": null,
+    "type": "expense",
+    "labels": { "de": "Gebühren", "en": "Fees" }
+  },
+  {
+    "id": "fees_bank",
+    "parentId": "fees",
+    "type": "expense",
+    "labels": { "de": "Bankgebühren", "en": "Bank fees" }
+  },
+  {
+    "id": "transfers_internal",
+    "parentId": null,
+    "type": "transfer",
+    "labels": { "de": "Interne Umbuchung", "en": "Internal transfer" }
+  },
+  {
+    "id": "uncategorized",
+    "parentId": null,
+    "type": "expense",
+    "labels": { "de": "Sonstiges", "en": "Uncategorized" }
+  }
+]
+

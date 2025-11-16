@@ -9,6 +9,7 @@ import {
   valueFor,
 } from './utils';
 import { normalizeHeader } from '../utils';
+import { stripBankReference } from '../../categorization/textPreprocessor';
 
 const HEADER_KEYWORDS = [
   'buchungstag',
@@ -95,7 +96,7 @@ export const sparkasseProfile: BankProfile = {
       valueFor(record, ['Beschreibung', 'Verwendungszweck', 'Buchungstext']);
 
     // Build comprehensive rawText from multiple fields
-    const rawText = buildRawText(record, [
+    const rawTextOriginal = buildRawText(record, [
       'Buchungstext',
       'Verwendungszweck',
       'Begünstigter/Zahlungspflichtiger',
@@ -103,6 +104,9 @@ export const sparkasseProfile: BankProfile = {
       'Vorgang',
       'Beschreibung',
     ]);
+    
+    // Extract bank reference ID and clean text
+    const { cleanText: rawText, bankReferenceId } = stripBankReference(rawTextOriginal);
 
     // Extract currency from Währung field if present, default to EUR
     const currencyRaw = valueByIncludes(record, ['waehrung', 'currency']) || valueFor(record, ['Währung', 'Currency']);
@@ -121,6 +125,7 @@ export const sparkasseProfile: BankProfile = {
       mcc: null,
       reference: reference || null,
       rawText,
+      bankReferenceId: bankReferenceId || null,
       raw: { ...record },
     };
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { subscribeToDataMutations } from '../lib/dataEvents';
 
 export type SpendingCategory = { category: string; label: string; amount: number; share: number };
 
@@ -111,6 +112,13 @@ export function useDashboardData() {
 
   useEffect(() => {
     void fetchAll();
+  }, [fetchAll]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToDataMutations(() => {
+      void fetchAll();
+    });
+    return unsubscribe;
   }, [fetchAll]);
 
   return {

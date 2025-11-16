@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import BetterSqlite3 from 'better-sqlite3';
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
-import { applyCategoryFeedback } from '../db';
+import { applyCategoryFeedback, getTransactionById, insertOverrideRule, getAllOverrideRules, deleteOverrideRule, applyOverrideRuleToExistingTransactions } from '../db';
 import { isValidCategory } from '../config/categories';
+import { buildCategorizationExplanation } from '../categorization/explanation';
+import crypto from 'node:crypto';
 
 const filePath = process.env.NIMBUS_DB_PATH || process.env.DB_FILE || 'nimbus.db';
 const fallbackDb = new BetterSqlite3(filePath);
@@ -40,6 +42,20 @@ type QueryRow = {
   isTransfer: number | null;
   externalId: string | null;
   referenceId: string | null;
+  isRefund: number | null;
+  isRefunded: number | null;
+  refundGroupId: string | null;
+  isInternalTransfer: number | null;
+  internalTransferDirection: string | null;
+  internalTransferKind: string | null;
+  internalTransferGroupId: string | null;
+  isReimbursement: number | null;
+  reimbursementRole: string | null;
+  reimbursementGroupId: string | null;
+  reimbursementShareRatio: number | null;
+  bankReferenceId: string | null;
+  isPassThrough: number | null;
+  passThroughGroupId: string | null;
   raw: string | null;
 };
 
@@ -123,6 +139,20 @@ transactionsRouter.get('/', (req, res) => {
           isTransfer,
           externalId,
           referenceId,
+          isRefund,
+          isRefunded,
+          refundGroupId,
+          isInternalTransfer,
+          internalTransferDirection,
+          internalTransferKind,
+          internalTransferGroupId,
+          isReimbursement,
+          reimbursementRole,
+          reimbursementGroupId,
+          reimbursementShareRatio,
+          bankReferenceId,
+          isPassThrough,
+          passThroughGroupId,
           raw
         FROM transactions
         ${whereSql}
@@ -145,7 +175,7 @@ transactionsRouter.get('/', (req, res) => {
         parsedRaw && typeof parsedRaw.metadata === 'object' ? (parsedRaw.metadata as Record<string, unknown>) : undefined;
       const payee = row.payee ?? row.counterpart ?? null;
       const memo = row.memo ?? row.purpose ?? null;
-      return {
+      const tx: any = {
         id: row.id,
         bookingDate: row.bookingDate,
         bookedAt: row.bookingDate,
@@ -169,17 +199,38 @@ transactionsRouter.get('/', (req, res) => {
         source: row.source,
         sourceProfile: row.sourceProfile,
         transferLinkId: row.transferLinkId,
-        isInternalTransfer: Boolean(
-          row.transferLinkId ||
-            row.isTransfer ||
-            row.category === 'transfer_internal' ||
-            (row.category ? row.category.startsWith('internal') : false),
-        ),
+        isInternalTransfer: Boolean(row.isInternalTransfer) ||
+          Boolean(
+            row.transferLinkId ||
+              row.isTransfer ||
+              row.category === 'transfer_internal' ||
+              (row.category ? row.category.startsWith('internal') : false),
+          ),
         rawText: memo,
         externalId: row.externalId,
         referenceId: row.referenceId,
         metadata,
+        isRefund: Boolean(row.isRefund),
+        isRefunded: Boolean(row.isRefunded),
+        refundGroupId: row.refundGroupId ?? null,
+        internalTransferDirection: row.internalTransferDirection ?? null,
+        internalTransferKind: row.internalTransferKind ?? null,
+        internalTransferGroupId: row.internalTransferGroupId ?? null,
+        isReimbursement: Boolean(row.isReimbursement),
+        reimbursementRole: row.reimbursementRole ?? null,
+        reimbursementGroupId: row.reimbursementGroupId ?? null,
+        reimbursementShareRatio: row.reimbursementShareRatio ?? null,
+        bankReferenceId: row.bankReferenceId ?? null,
+        isPassThrough: Boolean(row.isPassThrough),
+        passThroughGroupId: row.passThroughGroupId ?? null,
       };
+      
+      // Add categorization explanation
+      const explanation = buildCategorizationExplanation(tx);
+      tx.categorizationReasonCode = explanation.code;
+      tx.categorizationReasonText = explanation.text;
+      
+      return tx;
     });
 
     const totalRow = db
@@ -226,6 +277,8 @@ transactionsRouter.get('/recent', (req, res) => {
           isTransfer,
           externalId,
           referenceId,
+          isPassThrough,
+          passThroughGroupId,
           raw
         FROM transactions
         ORDER BY datetime(bookingDate) DESC, id DESC
@@ -247,7 +300,7 @@ transactionsRouter.get('/recent', (req, res) => {
         parsedRaw && typeof parsedRaw.metadata === 'object' ? (parsedRaw.metadata as Record<string, unknown>) : undefined;
       const payee = row.payee ?? row.counterpart ?? null;
       const memo = row.memo ?? row.purpose ?? null;
-      return {
+      const tx: any = {
         id: row.id,
         bookingDate: row.bookingDate,
         bookedAt: row.bookingDate,
@@ -271,23 +324,84 @@ transactionsRouter.get('/recent', (req, res) => {
         source: row.source,
         sourceProfile: row.sourceProfile,
         transferLinkId: row.transferLinkId,
-        isInternalTransfer: Boolean(
-          row.transferLinkId ||
-            row.isTransfer ||
-            row.category === 'transfer_internal' ||
-            (row.category ? row.category.startsWith('internal') : false),
-        ),
+        isInternalTransfer: Boolean(row.isInternalTransfer) ||
+          Boolean(
+            row.transferLinkId ||
+              row.isTransfer ||
+              row.category === 'transfer_internal' ||
+              (row.category ? row.category.startsWith('internal') : false),
+          ),
+        internalTransferDirection: row.internalTransferDirection ?? null,
+        internalTransferKind: row.internalTransferKind ?? null,
+        internalTransferGroupId: row.internalTransferGroupId ?? null,
         rawText: memo,
         externalId: row.externalId,
         referenceId: row.referenceId,
         metadata,
+        isRefund: Boolean(row.isRefund),
+        isRefunded: Boolean(row.isRefunded),
+        refundGroupId: row.refundGroupId ?? null,
+        isReimbursement: Boolean(row.isReimbursement),
+        reimbursementRole: row.reimbursementRole ?? null,
+        reimbursementGroupId: row.reimbursementGroupId ?? null,
+        reimbursementShareRatio: row.reimbursementShareRatio ?? null,
+        bankReferenceId: row.bankReferenceId ?? null,
+        isPassThrough: Boolean(row.isPassThrough),
+        passThroughGroupId: row.passThroughGroupId ?? null,
       };
+      
+      // Add categorization explanation
+      const explanation = buildCategorizationExplanation(tx);
+      tx.categorizationReasonCode = explanation.code;
+      tx.categorizationReasonText = explanation.text;
+      
+      return tx;
     });
 
     return res.json({ ok: true, count: normalized.length, transactions: normalized });
   } catch (e: any) {
     console.error('GET /api/transactions/recent failed', e);
     return res.status(500).json({ error: 'Failed to load transactions' });
+  }
+});
+
+// Pass-through pairing endpoints
+transactionsRouter.post('/pass-through', (req, res) => {
+  try {
+    const db = getConnection(req);
+    const { transactionIds } = req.body || {};
+    if (!Array.isArray(transactionIds) || transactionIds.length !== 2) {
+      return res.status(400).json({ ok: false, error: 'Provide exactly two transactionIds' });
+    }
+    const [a, b] = transactionIds.map((v: any) => Number(v)).sort((x: number, y: number) => x - y);
+    const rows = db.prepare(`SELECT id, amountCents FROM transactions WHERE id IN (?, ?)`).all(a, b) as Array<{ id: number; amountCents: number }>;
+    if (!rows || rows.length !== 2) return res.status(404).json({ ok: false, error: 'Transactions not found' });
+    const sumCents = (rows[0].amountCents ?? 0) + (rows[1].amountCents ?? 0);
+    if (Math.abs(sumCents) > 100) {
+      return res.status(400).json({ ok: false, error: 'Pass-through requires amounts to net to ~0 (±1€)' });
+    }
+    const groupId = `pt:${a}:${b}`;
+    db.prepare(`UPDATE transactions SET isPassThrough = 1, passThroughGroupId = ? WHERE id IN (?, ?)`).run(groupId, a, b);
+    return res.json({ ok: true, passThroughGroupId: groupId, transactionIds: [a, b], netCents: sumCents });
+  } catch (e: any) {
+    console.error('[pass-through] error', e);
+    return res.status(500).json({ ok: false, error: 'Failed to set pass-through' });
+  }
+});
+
+transactionsRouter.post('/pass-through/remove', (req, res) => {
+  try {
+    const db = getConnection(req);
+    const { transactionIds } = req.body || {};
+    if (!Array.isArray(transactionIds) || transactionIds.length === 0) {
+      return res.status(400).json({ ok: false, error: 'Provide transactionIds to clear' });
+    }
+    const placeholders = transactionIds.map(() => '?').join(',');
+    db.prepare(`UPDATE transactions SET isPassThrough = 0, passThroughGroupId = NULL WHERE id IN (${placeholders})`).run(...transactionIds);
+    return res.json({ ok: true, transactionIds });
+  } catch (e: any) {
+    console.error('[pass-through/remove] error', e);
+    return res.status(500).json({ ok: false, error: 'Failed to clear pass-through' });
   }
 });
 
@@ -330,6 +444,182 @@ transactionsRouter.post('/:id/category', (req, res) => {
   } catch (error) {
     console.error('POST /api/transactions/:id/category failed', error);
     return res.status(500).json({ error: 'Failed to update category' });
+  }
+});
+
+transactionsRouter.post('/:id/promote-rule', (req, res) => {
+  try {
+    const id = Number.parseInt(String(req.params.id), 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid transaction id' });
+    }
+    const db = getConnection(req);
+    
+    // Get transaction with additional fields needed for rule creation
+    const txRow = db
+      .prepare(`
+        SELECT id, category, payee, counterpartName, memo, purpose,
+               isRefund, isRefunded, isInternalTransfer, isReimbursement
+        FROM transactions
+        WHERE id = ?
+      `)
+      .get(id) as {
+        id: number;
+        category: string | null;
+        payee: string | null;
+        counterpartName: string | null;
+        memo: string | null;
+        purpose: string | null;
+        isRefund: number | null;
+        isRefunded: number | null;
+        isInternalTransfer: number | null;
+        isReimbursement: number | null;
+      } | undefined;
+
+    if (!txRow) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    // Validation: cannot promote if category is 'other' or 'other_review'
+    if (!txRow.category || txRow.category === 'other' || txRow.category === 'other_review') {
+      return res.status(400).json({ 
+        error: 'Cannot create rule from uncategorized transaction. Please assign a category first.' 
+      });
+    }
+
+    // Validation: cannot promote refunds, internal transfers, or reimbursements
+    if (txRow.isRefund || txRow.isRefunded || txRow.isInternalTransfer || txRow.isReimbursement) {
+      return res.status(400).json({ 
+        error: 'Cannot create rule from refund, internal transfer, or reimbursement transaction.' 
+      });
+    }
+
+    // Determine merchant pattern
+    // Prefer payee or counterpartName, fall back to memo or purpose
+    let merchantPattern: string | null = null;
+    let patternType: 'payee' | 'memo' = 'payee';
+
+    if (txRow.payee && txRow.payee.trim()) {
+      merchantPattern = txRow.payee.trim();
+      patternType = 'payee';
+    } else if (txRow.counterpartName && txRow.counterpartName.trim()) {
+      merchantPattern = txRow.counterpartName.trim();
+      patternType = 'payee';
+    } else if (txRow.memo && txRow.memo.trim()) {
+      merchantPattern = txRow.memo.trim();
+      patternType = 'memo';
+    } else if (txRow.purpose && txRow.purpose.trim()) {
+      merchantPattern = txRow.purpose.trim();
+      patternType = 'memo';
+    }
+
+    if (!merchantPattern || merchantPattern.length < 2) {
+      return res.status(400).json({ 
+        error: 'Transaction does not have a merchant name or description suitable for rule creation.' 
+      });
+    }
+
+    // Validate category
+    if (!isValidCategory(txRow.category)) {
+      return res.status(400).json({ error: 'Invalid category id' });
+    }
+
+    // Create the user override rule
+    const ruleId = `user_rule_${crypto.randomUUID()}`;
+    const rule = insertOverrideRule(
+      {
+        id: ruleId,
+        patternType,
+        pattern: merchantPattern,
+        categoryId: txRow.category,
+        applyToPast: false, // v1: only apply to future transactions
+      },
+      db
+    );
+
+    return res.json({
+      ok: true,
+      ruleId: rule.id,
+      pattern: rule.pattern,
+      patternType: rule.patternType,
+      categoryId: rule.categoryId,
+      message: `Rule created: future transactions with ${patternType} containing "${rule.pattern}" will be categorized as "${rule.categoryId}"`,
+    });
+  } catch (error: any) {
+    console.error('POST /api/transactions/:id/promote-rule failed', error);
+    return res.status(500).json({ error: error?.message || 'Failed to create rule' });
+  }
+});
+
+transactionsRouter.get('/user-rules', (req, res) => {
+  try {
+    const db = getConnection(req);
+    const rules = getAllOverrideRules(db);
+    
+    const apiRules = rules.map(rule => ({
+      id: rule.id,
+      pattern: rule.pattern,
+      patternType: rule.patternType,
+      categoryId: rule.categoryId,
+      createdAt: rule.createdAt,
+    }));
+
+    return res.json({ rules: apiRules });
+  } catch (error: any) {
+    console.error('GET /api/transactions/user-rules failed', error);
+    return res.status(500).json({ error: error?.message || 'Failed to load rules' });
+  }
+});
+
+transactionsRouter.delete('/user-rules/:id', (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: 'Rule id is required' });
+    }
+
+    const db = getConnection(req);
+    const deleted = deleteOverrideRule(id, db);
+
+    if (!deleted) {
+      return res.status(404).json({ error: 'Rule not found' });
+    }
+
+    return res.json({ ok: true, message: 'Rule deleted' });
+  } catch (error: any) {
+    console.error('DELETE /api/transactions/user-rules/:id failed', error);
+    return res.status(500).json({ error: error?.message || 'Failed to delete rule' });
+  }
+});
+
+transactionsRouter.post('/user-rules/:id/apply', (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ ok: false, error: 'Rule id is required' });
+    }
+
+    const db = getConnection(req);
+    
+    // Verify the rule exists
+    const rules = getAllOverrideRules(db);
+    const rule = rules.find(r => r.id === id);
+    
+    if (!rule) {
+      return res.status(404).json({ ok: false, error: 'Rule not found' });
+    }
+
+    // Apply the rule to existing transactions
+    const result = applyOverrideRuleToExistingTransactions(id, db);
+
+    return res.json({
+      ok: true,
+      ruleId: id,
+      updatedCount: result.updatedCount,
+    });
+  } catch (error: any) {
+    console.error('[user-rules/apply] failed', error);
+    return res.status(500).json({ ok: false, error: 'Failed to apply rule to existing transactions' });
   }
 });
 

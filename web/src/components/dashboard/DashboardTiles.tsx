@@ -9,6 +9,7 @@ type DashboardTilesProps = {
     uncategorized: number;
     lowConfidence: number;
   };
+  reviewLoading?: boolean;
   dataQuality: {
     lastImport?: DashboardSummary['lastImport'];
     warningsCount: number;
@@ -23,6 +24,7 @@ type DashboardTilesProps = {
 export const DashboardTiles: React.FC<DashboardTilesProps> = ({
   subscriptions,
   review,
+  reviewLoading = false,
   dataQuality,
   insights,
   onOpenSubscriptions,
@@ -64,8 +66,8 @@ export const DashboardTiles: React.FC<DashboardTilesProps> = ({
         onAction={onOpenReview}
       >
         <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
-          <ReviewRow label="Unkategorisiert" value={review.uncategorized} />
-          <ReviewRow label="Niedrige Confidence" value={review.lowConfidence} />
+          <ReviewRow label="Unkategorisiert" value={review.uncategorized} loading={reviewLoading} />
+          <ReviewRow label="Niedrige Confidence" value={review.lowConfidence} loading={reviewLoading} />
         </div>
       </TileCard>
 
@@ -150,7 +152,7 @@ function TileCard({
   );
 }
 
-function ReviewRow({ label, value }: { label: string; value: number }) {
+function ReviewRow({ label, value, loading }: { label: string; value: number; loading?: boolean }) {
   const tone =
     value > 0
       ? 'bg-amber-500/10 text-amber-700 dark:bg-amber-500/10 dark:text-amber-200'
@@ -160,7 +162,7 @@ function ReviewRow({ label, value }: { label: string; value: number }) {
     <div className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-slate-900/60">
       <span>{label}</span>
       <span className={`inline-flex min-w-[40px] justify-center rounded-full px-3 py-1 text-xs font-medium ${tone}`}>
-        {value.toLocaleString('de-DE')}
+        {loading ? '–' : value.toLocaleString('de-DE')}
       </span>
     </div>
   );

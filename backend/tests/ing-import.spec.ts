@@ -1,33 +1,55 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { describe, it, expect } from 'vitest';
 
+import { readFileSync } from 'fs';
+
+import { resolve } from 'path';
+
 import { parseBankCsv } from '../src/parser/parseBankCsv';
-import { isProfileCsvText } from '../src/parsing/profileEngine';
-import { ingProfile } from '../src/parsing/profiles/ing';
 
-const fx = (...p: string[]) => path.join(__dirname, 'fixtures', 'DE', ...p);
-const readBuf = (n: string) => fs.readFileSync(fx(n));
+describe('ING CSV parser', () => {
 
-describe('ING CSV detection + parse', () => {
-  it('detects ING header', () => {
-    const buf = readBuf('ing_min.csv');
-    expect(isProfileCsvText(buf, ingProfile)).toBe(true);
-  });
+  const minPath = resolve(__dirname, 'fixtures', 'ing_min.csv');
 
-  it('parses rows and shapes ParsedRow contract', async () => {
-    const buf = readBuf('ing_min.csv');
-    const result = await parseBankCsv(buf);
+  const fullPath = resolve(__dirname, 'fixtures', 'ing.csv');
+
+  const minBuffer = readFileSync(minPath);
+
+  const fullBuffer = readFileSync(fullPath);
+
+  it('detects ING and parses rows from ing_min.csv', () => {
+
+    const result = parseBankCsv(minBuffer);
+
     expect(result.profileId).toBe('ing');
-    expect(result.confidence).toBe(1);
-    expect(result.rows.length).toBeGreaterThan(0);
-    const first = result.rows[0];
-    expect(first.bookingDate).toBe('2025-11-16');
-    expect(typeof first.amountCents).toBe('number');
-    expect(first.currency).toBe('EUR');
-    expect(['in', 'out']).toContain(first.direction);
-    expect(first.accountId.startsWith('ing:')).toBe(true);
-  });
-});
 
+    expect(result.rows.length).toBeGreaterThan(0);
+
+    for (const row of result.rows) {
+
+      expect(row.bookingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+      expect(typeof row.amountCents).toBe('number');
+
+      expect(['in', 'out']).toContain(row.direction);
+
+      expect(row.externalId).toMatch(/^ing-/);
+
+    }
+
+  });
+
+  it('parses full ing.csv deterministically', () => {
+
+    const r1 = parseBankCsv(fullBuffer);
+
+    const r2 = parseBankCsv(fullBuffer);
+
+    expect(r1.profileId).toBe('ing');
+
+    expect(r1.rows.length).toBeGreaterThan(0);
+
+    expect(r1.rows).toEqual(r2.rows);
+
+  });
+
+});

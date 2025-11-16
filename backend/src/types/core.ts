@@ -22,6 +22,22 @@ export interface Transaction {
   isTransferLikeHint?: boolean;
   transferLinkId?: string | null;
   raw?: Record<string, unknown>;
+  isRefund?: boolean;
+  isRefunded?: boolean;
+  refundGroupId?: string | null;
+  isInternalTransfer?: boolean;
+  internalTransferDirection?: 'out' | 'in' | null;
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | null;
+  internalTransferGroupId?: string | null;
+  isReimbursement?: boolean;
+  reimbursementRole?: 'payer' | 'receiver' | null;
+  reimbursementGroupId?: string | null;
+  reimbursementShareRatio?: number | null;
+  bankReferenceId?: string | null;
+  categorizationReasonCode?: string;
+  categorizationReasonText?: string;
+  isPassThrough?: boolean;
+  passThroughGroupId?: string | null;
 }
 
 export interface TransferLink {
@@ -32,6 +48,16 @@ export interface TransferLink {
   score: number;
   reasons: string[];
   createdAt: string;
+}
+
+export type AccountRole = 'spending' | 'savings' | 'wallet';
+
+export interface Account {
+  id: string;
+  iban?: string | null;
+  name?: string | null;
+  role?: AccountRole;
+  createdAt?: string;
 }
 
 export interface UserOverrideRule {

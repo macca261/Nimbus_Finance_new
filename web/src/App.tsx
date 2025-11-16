@@ -3,8 +3,13 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Dashboard } from './pages/Dashboard';
 import { Transactions } from './pages/Transactions';
 import { ComingSoon } from './pages/ComingSoon';
+import AccountsPage from './pages/Accounts';
 import { ImportsPage } from './pages/Imports';
 import { NormalizerAdminPage } from './pages/admin/NormalizerAdminPage';
+import AdminImports from './pages/admin/AdminImports';
+import SettingsNormalizer from './pages/settings/SettingsNormalizer';
+import ReviewPage from './pages/Review';
+import SonstigesCleanupPage from './pages/SonstigesCleanup';
 
 const Budgets = () => (
   <ComingSoon title="Budgets" description="Plane deine Ausgaben und verfolge Budgetziele." />
@@ -12,7 +17,7 @@ const Budgets = () => (
 
 const Goals = () => <ComingSoon title="Goals" description="Setze dir Ziele und beobachte deinen Fortschritt." />;
 
-const Accounts = () => <ComingSoon title="Accounts" description="Verwalte deine verbundenen Konten." />;
+const Accounts = () => <AccountsPage />;
 
 const Insights = () => <ComingSoon title="Insights" description="Intelligente Analysen und Reports folgen bald." />;
 
@@ -30,7 +35,11 @@ function App() {
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/insights" element={<Insights />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/settings/normalizer" element={<SettingsNormalizer />} />
         <Route path="/admin/normalizer" element={<NormalizerAdminPage />} />
+        <Route path="/admin/imports" element={<AdminImports />} />
+        <Route path="/review" element={<ReviewPage />} />
+        <Route path="/review/sonstiges" element={<SonstigesCleanupPage />} />
       </Routes>
     </BrowserRouter>
   );

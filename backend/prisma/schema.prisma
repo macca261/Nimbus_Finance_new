@@ -1,0 +1,85 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Category {
+  id        String        @id @default(cuid())
+  name      String
+  parentId  String?
+  parent    Category?     @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Category[]    @relation("CategoryHierarchy")
+  sortOrder Int           @default(0)
+
+  // One category can be the result of many rules
+  rules     CategoryRule[]
+
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([parentId])
+}
+
+model CategoryRule {
+  id          String   @id @default(cuid())
+
+  // 'system' or 'user'
+  source      String   @default("user")
+
+  enabled     Boolean  @default(true)
+  score       Int      @default(200)
+
+  /**
+   * The category id we set if this rule matches.
+   * This should reference Category.id, but we keep the raw string field as well.
+   */
+  setCategory String
+  category    Category @relation(fields: [setCategory], references: [id], onDelete: Restrict)
+
+  /**
+   * JSON blob with match conditions:
+   * {
+   *   direction?: 'in' | 'out',
+   *   contains?: string[],
+   *   regex?: string,
+   *   ibanEquals?: string,
+   *   mccIn?: string[],
+   *   merchantEquals?: string,
+   *   minAmountAbs?: number,
+   *   maxAmountAbs?: number
+   * }
+   */
+  whenJson    Json
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled, score])
+  @@index([source])
+}
+
+model MerchantPattern {
+  id         String    @id @default(cuid())
+
+  source     String    @default("user")
+  pattern    String
+  normalized String
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  score      Int       @default(100)
+  exact      Boolean   @default(false)
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([source])
+  @@index([categoryId])
+}
+

@@ -1,4 +1,5 @@
 import React, { useId, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { UploadCloud } from 'lucide-react';
 import { useFinanceStore } from '../../state/useFinanceStore';
 import { toast } from '../../lib/toast';
@@ -71,13 +72,15 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
         body: form,
       });
 
+      // Always try to read JSON, even on error
+      let data: ImportResponse | null = null;
+      try {
+        data = (await res.json()) as ImportResponse;
+      } catch {
+        data = null;
+      }
+
       if (res.ok) {
-        let data: ImportResponse | null = null;
-        try {
-          data = (await res.json()) as ImportResponse;
-        } catch {
-          data = null;
-        }
         const profileId = data?.profileId || 'unbekannt';
         const inserted =
           data?.insertedCount ??
@@ -94,14 +97,14 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
         return;
       }
 
-      let err: ImportResponse | null = null;
-      try {
-        err = (await res.json()) as ImportResponse;
-      } catch {
-        err = null;
-      }
-
-      console.error('CSV import failed', { status: res.status, payload: err });
+      // Handle error response
+      const err = data;
+      console.error('CSV import failed', {
+        status: res.status,
+        code: err?.code,
+        message: err?.message,
+        payload: err,
+      });
 
       if (err?.code === 'IMPORT_EMPTY') {
         const title = err.message ?? 'Keine gültigen Umsätze importiert.';
@@ -129,8 +132,23 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
         return;
       }
 
-      const fallbackMessage = `Import fehlgeschlagen (HTTP ${res.status}).`;
-      const message = err?.message ?? fallbackMessage;
+      if (err?.code === 'BAD_REQUEST') {
+        const message = err.message ?? 'Ungültige Anfrage. Bitte überprüfe die Datei.';
+        setError(message);
+        toast(message, 'error');
+        return;
+      }
+
+      if (err?.code === 'IMPORT_FAILED') {
+        const message = err.message ?? 'Unbekannter Importfehler. Bitte versuche es erneut.';
+        setError(message);
+        toast(message, 'error');
+        return;
+      }
+
+      // Fallback: show backend message if available, otherwise HTTP status
+      const fallbackMessage = `Import fehlgeschlagen (HTTP ${res.status})`;
+      const message = err?.message ?? err?.code ?? fallbackMessage;
       setError(message);
       toast(message, 'error');
     } catch (e: any) {
@@ -224,8 +242,14 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
         </div>
       ) : null}
       {info && !error ? (
-        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 whitespace-pre-wrap">
-          {info}
+        <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200">
+          <p className="whitespace-pre-wrap">{info}</p>
+          <Link
+            to="/admin/imports"
+            className="mt-2 inline-flex text-[11px] font-semibold text-emerald-700 underline hover:text-emerald-800 dark:text-emerald-200 dark:hover:text-emerald-100"
+          >
+            Importe verwalten
+          </Link>
         </div>
       ) : null}
     </div>

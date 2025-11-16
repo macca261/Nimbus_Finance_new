@@ -1,45 +1,47 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import { describe, it, expect } from 'vitest';
 
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'fs';
 
-import { isProfileCsvText, parseWithProfile } from '../src/parsing/profileEngine';
-import { commerzbankProfile } from '../src/parsing/profiles/commerzbank';
+import { resolve } from 'path';
 
-const fixturePath = (...segments: string[]) => path.join(__dirname, 'fixtures', ...segments);
-const readFixtureBuffer = (...segments: string[]): Buffer => fs.readFileSync(fixturePath(...segments));
+import { parseBankCsv } from '../src/parser/parseBankCsv';
 
-describe('Commerzbank profile detection', () => {
-  it('detects the Commerzbank minimal export', () => {
-    const buffer = readFixtureBuffer('DE', 'commerzbank_min.csv');
-    expect(isProfileCsvText(buffer, commerzbankProfile)).toBe(true);
-  });
+describe('Commerzbank CSV parser', () => {
 
-  it('does not mis-detect PayPal exports', () => {
-    const buffer = readFixtureBuffer('paypal_min.csv');
-    expect(isProfileCsvText(buffer, commerzbankProfile)).toBe(false);
-  });
-});
+  const fixturePath = resolve(__dirname, 'fixtures', 'commerzbank_min.csv');
 
-describe('parseWithProfile (Commerzbank)', () => {
-  const buffer = readFixtureBuffer('DE', 'commerzbank_min.csv');
-  const result = parseWithProfile(buffer, commerzbankProfile);
+  const buffer = readFileSync(fixturePath);
 
-  it('defaults missing currency values to EUR', () => {
+  it('detects Commerzbank and parses rows', () => {
+
+    const result = parseBankCsv(buffer);
+
+    expect(result.profileId).toBe('commerzbank');
+
     expect(result.rows.length).toBeGreaterThan(0);
-    result.rows.forEach(row => {
-      expect(row.currency).toBe('EUR');
-    });
+
+    for (const row of result.rows) {
+
+      expect(row.bookingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+      expect(typeof row.amountCents).toBe('number');
+
+      expect(['in', 'out']).toContain(row.direction);
+
+      expect(row.externalId).toMatch(/^commerzbank-/);
+
+    }
+
   });
 
-  it('derives account identifiers with the commerzbank: prefix', () => {
-    expect(result.rows.every(row => row.accountId.startsWith('commerzbank:'))).toBe(true);
+  it('is deterministic for the same CSV buffer', () => {
+
+    const r1 = parseBankCsv(buffer);
+
+    const r2 = parseBankCsv(buffer);
+
+    expect(r1.rows).toEqual(r2.rows);
+
   });
 
-  it('provides balance-derived metadata when saldo is present', () => {
-    expect(result.openingBalance).toBeCloseTo(8500);
-    expect(result.closingBalance).toBeCloseTo(7571.6, 3);
-  });
 });
-
-

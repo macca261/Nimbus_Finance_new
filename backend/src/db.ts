@@ -8,6 +8,10 @@ import type { Transaction, UserOverrideRule, Source, TransferLink } from './type
 import type { NormalizedTransaction } from './types/transactions';
 import type { CategoryId } from './types/category';
 import { findMatchingOverride } from './overrides/userOverrides';
+import { findRefundPair, linkRefundPair } from './categorization/refundMatcher';
+import { findInternalTransferPair, applyInternalTransferFlags } from './categorization/internalTransferMatcher';
+import { findReimbursementMatchForIncome, applyReimbursementFlags } from './categorization/reimbursementMatcher';
+import { buildCategorizationExplanation } from './categorization/explanation';
 
 export type CanonicalRow = {
   publicId?: string;
@@ -40,6 +44,20 @@ export type CanonicalRow = {
   isTransfer?: boolean
   transferLinkId?: string | null
   confidence?: number | null
+  isRefund?: boolean
+  isRefunded?: boolean
+  refundGroupId?: string | null
+  isInternalTransfer?: boolean
+  internalTransferDirection?: 'out' | 'in' | null
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | null
+  internalTransferGroupId?: string | null
+  isReimbursement?: boolean
+  reimbursementRole?: 'payer' | 'receiver' | null
+  reimbursementGroupId?: string | null
+  reimbursementShareRatio?: number | null
+  bankReferenceId?: string | null
+  isPassThrough?: boolean
+  passThroughGroupId?: string | null
 }
 
 const ENV_DB = (process.env.NIMBUS_DB_PATH || '').trim()
@@ -131,6 +149,23 @@ export function ensureSchema(db: Database) {
   ensureColumn('isTransfer', "ALTER TABLE transactions ADD COLUMN isTransfer INTEGER DEFAULT 0");
   ensureColumn('transferLinkId', "ALTER TABLE transactions ADD COLUMN transferLinkId TEXT");
   ensureColumn('confidence', "ALTER TABLE transactions ADD COLUMN confidence REAL");
+  ensureColumn('isRefund', "ALTER TABLE transactions ADD COLUMN isRefund INTEGER DEFAULT 0");
+  ensureColumn('isRefunded', "ALTER TABLE transactions ADD COLUMN isRefunded INTEGER DEFAULT 0");
+  ensureColumn('refundGroupId', "ALTER TABLE transactions ADD COLUMN refundGroupId TEXT");
+  ensureColumn('isInternalTransfer', "ALTER TABLE transactions ADD COLUMN isInternalTransfer INTEGER DEFAULT 0");
+  ensureColumn('internalTransferDirection', "ALTER TABLE transactions ADD COLUMN internalTransferDirection TEXT");
+  ensureColumn('internalTransferKind', "ALTER TABLE transactions ADD COLUMN internalTransferKind TEXT");
+  ensureColumn('internalTransferGroupId', "ALTER TABLE transactions ADD COLUMN internalTransferGroupId TEXT");
+  ensureColumn('isReimbursement', "ALTER TABLE transactions ADD COLUMN isReimbursement INTEGER DEFAULT 0");
+  ensureColumn('reimbursementRole', "ALTER TABLE transactions ADD COLUMN reimbursementRole TEXT");
+  ensureColumn('reimbursementGroupId', "ALTER TABLE transactions ADD COLUMN reimbursementGroupId TEXT");
+  ensureColumn('reimbursementShareRatio', "ALTER TABLE transactions ADD COLUMN reimbursementShareRatio REAL");
+  ensureColumn('bankReferenceId', "ALTER TABLE transactions ADD COLUMN bankReferenceId TEXT", () => {
+    console.log('[migrate] added column transactions.bankReferenceId');
+  });
+  // Pass-through pairing support
+  ensureColumn('isPassThrough', "ALTER TABLE transactions ADD COLUMN isPassThrough INTEGER DEFAULT 0");
+  ensureColumn('passThroughGroupId', "ALTER TABLE transactions ADD COLUMN passThroughGroupId TEXT");
 
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS ux_tx_dedup
@@ -152,6 +187,25 @@ export function ensureSchema(db: Database) {
     );
   `);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_transfer_links_pair ON transfer_links(fromTxId, toTxId);`);
+
+  // Accounts table (for metadata like role)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS accounts (
+      id TEXT PRIMARY KEY,
+      iban TEXT,
+      name TEXT,
+      role TEXT DEFAULT 'spending',
+      createdAt TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    );
+  `);
+  // Ensure role column exists (if table predated role)
+  try {
+    const accCols = db.prepare(`PRAGMA table_info('accounts')`).all() as { name: string }[];
+    const hasRole = accCols.some(c => c.name === 'role');
+    if (!hasRole) {
+      db.exec(`ALTER TABLE accounts ADD COLUMN role TEXT DEFAULT 'spending'`);
+    }
+  } catch {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS user_override_rules (
@@ -318,7 +372,8 @@ export function getAllOverrideRules(conn: Database): UserOverrideRule[] {
   })) as UserOverrideRule[];
 }
 
-type NormalizedCanonicalRow = {
+export type NormalizedCanonicalRow = {
+  importBatchId?: string | null;
   publicId: string;
   bookingDate: string;
   valueDate: string;
@@ -349,8 +404,23 @@ type NormalizedCanonicalRow = {
   isTransfer?: boolean;
   transferLinkId?: string | null;
   confidence?: number | null;
+  isRefund?: boolean;
+  isRefunded?: boolean;
+  refundGroupId?: string | null;
+  isInternalTransfer?: boolean;
+  internalTransferDirection?: 'out' | 'in' | null;
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | null;
+  internalTransferGroupId?: string | null;
+  isReimbursement?: boolean;
+  reimbursementRole?: 'payer' | 'receiver' | null;
+  reimbursementGroupId?: string | null;
+  reimbursementShareRatio?: number | null;
+  bankReferenceId?: string | null;
+  isPassThrough?: boolean;
+  passThroughGroupId?: string | null;
   createdAt: string;
   transactionPayload: Transaction;
+  id?: number; // Database ID, added when reading from DB
 };
 
 function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
@@ -376,6 +446,20 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
   const isTransfer = Boolean(row.isTransfer);
   const transferLinkId = row.transferLinkId ?? null;
   const confidence = row.confidence ?? null;
+  const isRefund = Boolean(row.isRefund);
+  const isRefunded = Boolean(row.isRefunded);
+  const refundGroupId = row.refundGroupId ?? null;
+  const isInternalTransfer = Boolean(row.isInternalTransfer);
+  const internalTransferDirection = row.internalTransferDirection ?? null;
+  const internalTransferKind = row.internalTransferKind ?? null;
+  const internalTransferGroupId = row.internalTransferGroupId ?? null;
+  const isReimbursement = Boolean(row.isReimbursement);
+  const reimbursementRole = row.reimbursementRole ?? null;
+  const reimbursementGroupId = row.reimbursementGroupId ?? null;
+  const reimbursementShareRatio = row.reimbursementShareRatio ?? null;
+  const bankReferenceId = row.bankReferenceId ?? null;
+  const isPassThrough = Boolean(row.isPassThrough);
+  const passThroughGroupId = row.passThroughGroupId ?? null;
   const createdAt = new Date().toISOString();
 
   const fingerprint = txFingerprint({
@@ -409,6 +493,20 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
     isTransfer,
     transferLinkId,
     raw: { ...raw, accountIban, counterpartyIban },
+    isRefund,
+    isRefunded,
+    refundGroupId,
+    isInternalTransfer,
+    internalTransferDirection,
+    internalTransferKind,
+    internalTransferGroupId,
+    isReimbursement,
+    reimbursementRole,
+    reimbursementGroupId,
+    reimbursementShareRatio,
+    bankReferenceId,
+    isPassThrough,
+    passThroughGroupId,
   };
 
   return {
@@ -442,6 +540,18 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
     isTransfer,
     transferLinkId,
     confidence,
+    isRefund,
+    isRefunded,
+    refundGroupId,
+    isInternalTransfer,
+    internalTransferDirection,
+    internalTransferKind,
+    internalTransferGroupId,
+    isReimbursement,
+    reimbursementRole,
+    reimbursementGroupId,
+    reimbursementShareRatio,
+    bankReferenceId,
     createdAt,
     transactionPayload,
     importBatchId: row.importBatchId ?? null,
@@ -483,7 +593,19 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       referenceId,
       isTransfer,
       transferLinkId,
-      confidence
+      confidence,
+      isRefund,
+      isRefunded,
+      refundGroupId,
+      isInternalTransfer,
+      internalTransferDirection,
+      internalTransferKind,
+      internalTransferGroupId,
+      isReimbursement,
+      reimbursementRole,
+      reimbursementGroupId,
+      reimbursementShareRatio,
+      bankReferenceId
     ) VALUES (
       @publicId,
       @bookingDate,
@@ -516,14 +638,146 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       @referenceId,
       @isTransfer,
       @transferLinkId,
-      @confidence
+      @confidence,
+      @isRefund,
+      @isRefunded,
+      @refundGroupId,
+      @isInternalTransfer,
+      @internalTransferDirection,
+      @internalTransferKind,
+      @internalTransferGroupId,
+      @isReimbursement,
+      @reimbursementRole,
+      @reimbursementGroupId,
+      @reimbursementShareRatio,
+      @bankReferenceId
     )
+  `);
+
+  // Prepare UPDATE statement for existing rows that get paired with refunds
+  const updateRefundStmt = conn.prepare(`
+    UPDATE transactions
+    SET isRefund = @isRefund,
+        isRefunded = @isRefunded,
+        refundGroupId = @refundGroupId
+    WHERE publicId = @publicId
+  `);
+
+  // Prepare UPDATE statement for existing rows that get paired with internal transfers
+  const updateInternalTransferStmt = conn.prepare(`
+    UPDATE transactions
+    SET isInternalTransfer = @isInternalTransfer,
+        internalTransferDirection = @internalTransferDirection,
+        internalTransferKind = @internalTransferKind,
+        internalTransferGroupId = @internalTransferGroupId
+    WHERE publicId = @publicId
+  `);
+
+  // Prepare UPDATE statement for existing rows that get paired with reimbursements
+  const updateReimbursementStmt = conn.prepare(`
+    UPDATE transactions
+    SET isReimbursement = @isReimbursement,
+        reimbursementRole = @reimbursementRole,
+        reimbursementGroupId = @reimbursementGroupId,
+        reimbursementShareRatio = @reimbursementShareRatio
+    WHERE publicId = @publicId
   `);
 
   const tx = conn.transaction((batch: CanonicalRow[]) => {
     const overrideRules = getAllOverrideRules(conn);
+    
+    // Normalize all rows first to get accountIds
+    const normalizedBatch: NormalizedCanonicalRow[] = [];
     for (const r of batch) {
       const base = normalizeCanonicalRow(r);
+      normalizedBatch.push(base);
+    }
+    
+    // Fetch recent transactions for refund matching
+    // Group by accountId to optimize queries
+    const accountIds = new Set<string>();
+    for (const normalized of normalizedBatch) {
+      if (normalized.accountId) {
+        accountIds.add(normalized.accountId);
+      }
+    }
+    
+    // Fetch recent transactions for each account
+    // Use a wider window (180 days) to ensure we catch all potential pairs
+    // The refundMatcher will enforce the actual 90-day window per pair
+    const recentTransactionsMap = new Map<string, NormalizedCanonicalRow[]>();
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 180);
+    const cutoffDateStr = cutoffDate.toISOString().split('T')[0];
+    
+    for (const accountId of accountIds) {
+      const recentRows = conn.prepare(`
+        SELECT 
+          id, publicId, bookingDate, valueDate, amountCents, currency, purpose,
+          counterpartName, counterpartyIban, accountIban, bankProfile, rawCode,
+          raw, importFile, importBatchId, category, categoryConfidence,
+          category_source AS categorySource, category_explanation AS categoryExplanation,
+          category_rule_id AS categoryRuleId, direction, fingerprint, createdAt,
+          source, sourceProfile, accountId, payee, memo, externalId, referenceId,
+          isTransfer, transferLinkId, confidence, isRefund, isRefunded, refundGroupId
+        FROM transactions
+        WHERE accountId = @accountId
+          AND bookingDate >= @cutoffDate
+          AND (isRefund = 0 OR isRefund IS NULL)
+          AND (isRefunded = 0 OR isRefunded IS NULL)
+          AND (refundGroupId IS NULL)
+        ORDER BY bookingDate DESC
+      `).all({ accountId, cutoffDate: cutoffDateStr }) as any[];
+      
+      const normalizedRecent: NormalizedCanonicalRow[] = recentRows.map(row => ({
+        id: row.id,
+        publicId: row.publicId,
+        bookingDate: row.bookingDate,
+        valueDate: row.valueDate,
+        amountCents: row.amountCents,
+        currency: row.currency,
+        purpose: row.purpose,
+        counterpartName: row.counterpartName,
+        counterpartyIban: row.counterpartyIban,
+        accountIban: row.accountIban,
+        bankProfile: row.bankProfile,
+        rawCode: row.rawCode,
+        raw: row.raw ? JSON.parse(row.raw) : {},
+        importFile: row.importFile,
+        importBatchId: row.importBatchId,
+        category: row.category,
+        categoryConfidence: row.categoryConfidence,
+        categorySource: row.categorySource,
+        categoryExplanation: row.categoryExplanation,
+        categoryRuleId: row.categoryRuleId,
+        direction: row.direction,
+        fingerprint: row.fingerprint,
+        source: row.source as Source,
+        sourceProfile: row.sourceProfile,
+        accountId: row.accountId,
+        payee: row.payee,
+        memo: row.memo,
+        externalId: row.externalId,
+        referenceId: row.referenceId,
+        isTransfer: Boolean(row.isTransfer),
+        transferLinkId: row.transferLinkId,
+        confidence: row.confidence,
+        isRefund: Boolean(row.isRefund),
+        isRefunded: Boolean(row.isRefunded),
+        refundGroupId: row.refundGroupId,
+        isInternalTransfer: Boolean(row.isInternalTransfer),
+        internalTransferDirection: row.internalTransferDirection,
+        internalTransferKind: row.internalTransferKind,
+        internalTransferGroupId: row.internalTransferGroupId,
+        createdAt: row.createdAt,
+        transactionPayload: {} as Transaction, // Not needed for matching
+      }));
+      
+      recentTransactionsMap.set(accountId, normalizedRecent);
+    }
+    
+    // Categorize rows that don't have categories yet
+    for (const base of normalizedBatch) {
       if (!base.category) {
         const overrideMatch = findMatchingOverride(base.transactionPayload, overrideRules);
         const result = categorize({
@@ -544,7 +798,457 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         base.categoryExplanation = result.explanation ?? null;
         base.categoryRuleId = result.ruleId ?? null;
       }
+    }
+    
+    // Now try refund matching for each row
+    for (const base of normalizedBatch) {
+      // Try to find a refund pair
+      if (base.accountId) {
+        const recentTransactions = recentTransactionsMap.get(base.accountId) ?? [];
+        // Combine with other rows in the current batch (already normalized, but exclude current row)
+        const otherBatchRows = normalizedBatch.filter(n => n.publicId !== base.publicId);
+        const allCandidates: NormalizedCanonicalRow[] = [...recentTransactions, ...otherBatchRows];
+        
+        const matchedPair = findRefundPair(base, allCandidates);
+        if (matchedPair) {
+          const linked = linkRefundPair(base, matchedPair);
+          
+          // Determine which side of the pair is the new row
+          const isNewRowCharge = base.publicId === linked.charge.publicId;
+          
+          // Update the new row with refund flags
+          if (isNewRowCharge) {
+            base.isRefunded = linked.charge.isRefunded;
+            base.isRefund = false;
+          } else {
+            base.isRefund = linked.refund.isRefund;
+            base.isRefunded = false;
+          }
+          base.refundGroupId = linked.refundGroupId;
+          
+          // Update the existing row in DB
+          if (matchedPair.publicId) {
+            const existingIsCharge = matchedPair.publicId === linked.charge.publicId;
+            updateRefundStmt.run({
+              publicId: matchedPair.publicId,
+              isRefund: existingIsCharge ? 0 : 1,
+              isRefunded: existingIsCharge ? 1 : 0,
+              refundGroupId: linked.refundGroupId,
+            });
+            
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('[refundMatcher] paired refund', {
+                accountId: base.accountId,
+                amount: base.amountCents,
+                chargeId: linked.charge.publicId,
+                refundId: linked.refund.publicId,
+                refundGroupId: linked.refundGroupId,
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // Now try internal transfer matching for each row (after refund matching)
+    // For internal transfers, we need to check ALL accounts, not just the ones in the current batch
+    // because internal transfers are between different accounts
+    // Fetch recent transactions for internal transfer matching (last 30 days, smaller window)
+    const internalTransferCutoffDate = new Date();
+    internalTransferCutoffDate.setDate(internalTransferCutoffDate.getDate() - 30);
+    const internalTransferCutoffDateStr = internalTransferCutoffDate.toISOString().split('T')[0];
+    
+    // Collect all unique accountIds from batch
+    const batchAccountIds = new Set<string>();
+    for (const base of normalizedBatch) {
+      if (base.accountId) {
+        batchAccountIds.add(base.accountId);
+      }
+    }
+    
+    // For internal transfers, we need to fetch recent transactions for ALL accounts
+    // because internal transfers are between different accounts.
+    // First, get all distinct accountIds that have recent transactions
+    const allAccountIdsWithRecent = conn.prepare(`
+      SELECT DISTINCT accountId
+      FROM transactions
+      WHERE accountId IS NOT NULL
+        AND bookingDate >= @cutoffDate
+        AND (isRefund = 0 OR isRefund IS NULL)
+        AND (isRefunded = 0 OR isRefunded IS NULL)
+        AND (refundGroupId IS NULL)
+        AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+        AND (internalTransferGroupId IS NULL)
+    `).all({ cutoffDate: internalTransferCutoffDateStr }) as Array<{ accountId: string }>;
+    
+    const allRecentForInternalTransfers: NormalizedCanonicalRow[] = [];
+    
+    // Fetch recent transactions for all accounts
+    for (const { accountId } of allAccountIdsWithRecent) {
+      // Skip if we already fetched this account for refund matching (use existing data)
+      if (recentTransactionsMap.has(accountId)) {
+        allRecentForInternalTransfers.push(...recentTransactionsMap.get(accountId)!);
+        continue;
+      }
+      
+      // Fetch for this account
+      const recentRows = conn.prepare(`
+        SELECT 
+          id, publicId, bookingDate, valueDate, amountCents, currency, purpose,
+          counterpartName, counterpartyIban, accountIban, bankProfile, rawCode,
+          raw, importFile, importBatchId, category, categoryConfidence,
+          category_source AS categorySource, category_explanation AS categoryExplanation,
+          category_rule_id AS categoryRuleId, direction, fingerprint, createdAt,
+          source, sourceProfile, accountId, payee, memo, externalId, referenceId,
+          isTransfer, transferLinkId, confidence, isRefund, isRefunded, refundGroupId,
+          isInternalTransfer, internalTransferDirection, internalTransferKind, internalTransferGroupId
+        FROM transactions
+        WHERE accountId = @accountId
+          AND bookingDate >= @cutoffDate
+          AND (isRefund = 0 OR isRefund IS NULL)
+          AND (isRefunded = 0 OR isRefunded IS NULL)
+          AND (refundGroupId IS NULL)
+          AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+          AND (internalTransferGroupId IS NULL)
+        ORDER BY bookingDate DESC
+      `).all({ accountId, cutoffDate: internalTransferCutoffDateStr }) as any[];
+      
+      const normalizedRecent: NormalizedCanonicalRow[] = recentRows.map(row => ({
+        id: row.id,
+        publicId: row.publicId,
+        bookingDate: row.bookingDate,
+        valueDate: row.valueDate,
+        amountCents: row.amountCents,
+        currency: row.currency,
+        purpose: row.purpose,
+        counterpartName: row.counterpartName,
+        counterpartyIban: row.counterpartyIban,
+        accountIban: row.accountIban,
+        bankProfile: row.bankProfile,
+        rawCode: row.rawCode,
+        raw: row.raw ? JSON.parse(row.raw) : {},
+        importFile: row.importFile,
+        importBatchId: row.importBatchId,
+        category: row.category,
+        categoryConfidence: row.categoryConfidence,
+        categorySource: row.categorySource,
+        categoryExplanation: row.categoryExplanation,
+        categoryRuleId: row.categoryRuleId,
+        direction: row.direction,
+        fingerprint: row.fingerprint,
+        source: row.source as Source,
+        sourceProfile: row.sourceProfile,
+        accountId: row.accountId,
+        payee: row.payee,
+        memo: row.memo,
+        externalId: row.externalId,
+        referenceId: row.referenceId,
+        isTransfer: Boolean(row.isTransfer),
+        transferLinkId: row.transferLinkId,
+        confidence: row.confidence,
+        isRefund: Boolean(row.isRefund),
+        isRefunded: Boolean(row.isRefunded),
+        refundGroupId: row.refundGroupId,
+        isInternalTransfer: Boolean(row.isInternalTransfer),
+        internalTransferDirection: row.internalTransferDirection,
+        internalTransferKind: row.internalTransferKind,
+        internalTransferGroupId: row.internalTransferGroupId,
+        createdAt: row.createdAt,
+        transactionPayload: {} as Transaction,
+      }));
+      
+      allRecentForInternalTransfers.push(...normalizedRecent);
+    }
+    
+    // Try internal transfer matching for each row
+    for (const base of normalizedBatch) {
+      // Skip if already part of a refund pair or internal transfer
+      if (base.isRefund || base.isRefunded || base.refundGroupId || 
+          base.isInternalTransfer || base.internalTransferGroupId) {
+        continue;
+      }
+      
+      // Build candidate list: recent transactions + other batch rows (excluding current)
+      const otherBatchRows = normalizedBatch.filter(n => n.publicId !== base.publicId);
+      const allCandidates: NormalizedCanonicalRow[] = [...allRecentForInternalTransfers, ...otherBatchRows];
+      
+      // Build account role maps (by accountId and by IBAN)
+      const accountRows = (db.prepare(`SELECT id, iban, role FROM accounts`).all() as Array<{ id: string; iban?: string | null; role?: string | null }>) || [];
+      const roleById: Record<string, any> = {};
+      const roleByIban: Record<string, any> = {};
+      for (const ar of accountRows) {
+        if (ar?.id) roleById[ar.id] = (ar.role || 'spending') as any;
+        if (ar?.iban) roleByIban[String(ar.iban)] = (ar.role || 'spending') as any;
+      }
 
+      const transferMatch = findInternalTransferPair(base, allCandidates, { daysWindow: 3, accountRoleById: roleById, accountRoleByIban: roleByIban });
+      if (transferMatch) {
+        const flagged = applyInternalTransferFlags(transferMatch);
+        
+        // Determine which side of the pair is the new row
+        const isNewRowA = base.publicId === flagged.a.publicId;
+        
+        // Update the new row with internal transfer flags
+        if (isNewRowA) {
+          base.isInternalTransfer = flagged.a.isInternalTransfer;
+          base.internalTransferDirection = flagged.a.internalTransferDirection;
+          base.internalTransferKind = flagged.a.internalTransferKind;
+          base.internalTransferGroupId = flagged.a.internalTransferGroupId;
+        } else {
+          base.isInternalTransfer = flagged.b.isInternalTransfer;
+          base.internalTransferDirection = flagged.b.internalTransferDirection;
+          base.internalTransferKind = flagged.b.internalTransferKind;
+          base.internalTransferGroupId = flagged.b.internalTransferGroupId;
+        }
+        
+        // Update the existing row in DB
+        const existingRow = isNewRowA ? flagged.b : flagged.a;
+        if (existingRow.publicId) {
+          updateInternalTransferStmt.run({
+            publicId: existingRow.publicId,
+            isInternalTransfer: 1,
+            internalTransferDirection: existingRow.internalTransferDirection,
+            internalTransferKind: existingRow.internalTransferKind,
+            internalTransferGroupId: existingRow.internalTransferGroupId,
+          });
+          
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[internalTransferMatcher] paired', {
+              amountCents: base.amountCents,
+              accountIdA: transferMatch.a.accountId,
+              accountIdB: transferMatch.b.accountId,
+              kind: transferMatch.kind,
+              groupId: transferMatch.groupId,
+            });
+          }
+        }
+      } else {
+        // Single-sided savings detection (outgoing spending -> savings IBAN)
+        const maybe = require('./categorization/internalTransferMatcher') as any;
+        const single = maybe.classifySingleSidedSavingsTransfer
+          ? maybe.classifySingleSidedSavingsTransfer(base, { accountRoleById: roleById, accountRoleByIban: roleByIban })
+          : null;
+        if (single && single.isInternalTransfer && single.internalTransferKind === 'savings') {
+          base.isInternalTransfer = true;
+          base.internalTransferDirection = 'out';
+          base.internalTransferKind = 'savings';
+          base.internalTransferGroupId = single.internalTransferGroupId;
+          // Persist
+          updateInternalTransferStmt.run({
+            publicId: base.publicId,
+            isInternalTransfer: 1,
+            internalTransferDirection: 'out',
+            internalTransferKind: 'savings',
+            internalTransferGroupId: base.internalTransferGroupId,
+          });
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[internalTransferMatcher] single-sided savings', {
+              amountCents: base.amountCents,
+              accountId: base.accountId,
+              counterpartyIban: base.counterpartyIban,
+              groupId: base.internalTransferGroupId,
+            });
+          }
+        }
+      }
+    }
+    
+    // Now try reimbursement matching for each income row (after refund + internal transfer matching)
+    // Gather all new normalized rows that are not already part of refund/internal transfer pairs
+    const eligibleForReimbursement = normalizedBatch.filter(
+      r => !r.isRefund && !r.isRefunded && !r.refundGroupId &&
+           !r.isInternalTransfer && !r.internalTransferGroupId
+    );
+    
+    const newIncomes = eligibleForReimbursement.filter(r => r.amountCents > 0);
+    const newExpenses = eligibleForReimbursement.filter(r => r.amountCents < 0);
+    
+    // Fetch recent expenses from DB (last 60 days) as match candidates
+    const reimbursementCutoffDate = new Date();
+    reimbursementCutoffDate.setDate(reimbursementCutoffDate.getDate() - 60);
+    const reimbursementCutoffDateStr = reimbursementCutoffDate.toISOString().split('T')[0];
+    
+    // Get all accountIds from the batch
+    const reimbursementAccountIds = new Set<string>();
+    for (const base of normalizedBatch) {
+      if (base.accountId) {
+        reimbursementAccountIds.add(base.accountId);
+      }
+    }
+    
+    const recentExpensesFromDb: NormalizedCanonicalRow[] = [];
+    for (const accountId of reimbursementAccountIds) {
+      const recentRows = conn.prepare(`
+        SELECT 
+          id, publicId, bookingDate, valueDate, amountCents, currency, purpose,
+          counterpartName, counterpartyIban, accountIban, bankProfile, rawCode,
+          raw, importFile, importBatchId, category, categoryConfidence,
+          category_source AS categorySource, category_explanation AS categoryExplanation,
+          category_rule_id AS categoryRuleId, direction, fingerprint, createdAt,
+          source, sourceProfile, accountId, payee, memo, externalId, referenceId,
+          isTransfer, transferLinkId, confidence, isRefund, isRefunded, refundGroupId,
+          isInternalTransfer, internalTransferDirection, internalTransferKind, internalTransferGroupId,
+          isReimbursement, reimbursementRole, reimbursementGroupId, reimbursementShareRatio
+        FROM transactions
+        WHERE accountId = @accountId
+          AND amountCents < 0
+          AND bookingDate >= @cutoffDate
+          AND (isRefund = 0 OR isRefund IS NULL)
+          AND (isRefunded = 0 OR isRefunded IS NULL)
+          AND (refundGroupId IS NULL)
+          AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+          AND (internalTransferGroupId IS NULL)
+          AND (isReimbursement = 0 OR isReimbursement IS NULL)
+          AND (reimbursementGroupId IS NULL)
+        ORDER BY bookingDate DESC
+      `).all({ accountId, cutoffDate: reimbursementCutoffDateStr }) as any[];
+      
+      const normalizedRecent: NormalizedCanonicalRow[] = recentRows.map(row => ({
+        id: row.id,
+        publicId: row.publicId,
+        bookingDate: row.bookingDate,
+        valueDate: row.valueDate,
+        amountCents: row.amountCents,
+        currency: row.currency,
+        purpose: row.purpose,
+        counterpartName: row.counterpartName,
+        counterpartyIban: row.counterpartyIban,
+        accountIban: row.accountIban,
+        bankProfile: row.bankProfile,
+        rawCode: row.rawCode,
+        raw: row.raw ? JSON.parse(row.raw) : {},
+        importFile: row.importFile,
+        importBatchId: row.importBatchId,
+        category: row.category,
+        categoryConfidence: row.categoryConfidence,
+        categorySource: row.categorySource,
+        categoryExplanation: row.categoryExplanation,
+        categoryRuleId: row.categoryRuleId,
+        direction: row.direction,
+        fingerprint: row.fingerprint,
+        source: row.source as Source,
+        sourceProfile: row.sourceProfile,
+        accountId: row.accountId,
+        payee: row.payee,
+        memo: row.memo,
+        externalId: row.externalId,
+        referenceId: row.referenceId,
+        isTransfer: Boolean(row.isTransfer),
+        transferLinkId: row.transferLinkId,
+        confidence: row.confidence,
+        isRefund: Boolean(row.isRefund),
+        isRefunded: Boolean(row.isRefunded),
+        refundGroupId: row.refundGroupId,
+        isInternalTransfer: Boolean(row.isInternalTransfer),
+        internalTransferDirection: row.internalTransferDirection,
+        internalTransferKind: row.internalTransferKind,
+        internalTransferGroupId: row.internalTransferGroupId,
+        isReimbursement: Boolean(row.isReimbursement),
+        reimbursementRole: row.reimbursementRole,
+        reimbursementGroupId: row.reimbursementGroupId,
+        reimbursementShareRatio: row.reimbursementShareRatio,
+        createdAt: row.createdAt,
+        transactionPayload: {} as Transaction,
+      }));
+      
+      recentExpensesFromDb.push(...normalizedRecent);
+    }
+    
+    // Try reimbursement matching for each income
+    for (const income of newIncomes) {
+      // Skip if already part of a reimbursement
+      if (income.isReimbursement || income.reimbursementGroupId) {
+        continue;
+      }
+      
+      // Build candidate expense list
+      const candidateExpenses = [
+        ...recentExpensesFromDb,
+        ...newExpenses,
+      ].filter(e =>
+        e.publicId !== income.publicId &&
+        !e.isRefund &&
+        !e.isRefunded &&
+        !e.refundGroupId &&
+        !e.isInternalTransfer &&
+        !e.internalTransferGroupId &&
+        !e.isReimbursement &&
+        !e.reimbursementGroupId
+      );
+      
+      const reimbursementMatch = findReimbursementMatchForIncome(income, candidateExpenses, {
+        daysWindow: 30,
+        minRatio: 0.25,
+        maxRatio: 1.0,
+      });
+      
+      if (reimbursementMatch) {
+        const flagged = applyReimbursementFlags(reimbursementMatch);
+        
+        // Update the income row (new row) with reimbursement flags
+        income.isReimbursement = flagged.income.isReimbursement;
+        income.reimbursementRole = flagged.income.reimbursementRole;
+        income.reimbursementGroupId = flagged.income.reimbursementGroupId;
+        income.reimbursementShareRatio = flagged.income.reimbursementShareRatio;
+        
+        // Update the expense row
+        // Check if expense is in the current batch or in DB
+        const expenseInBatch = normalizedBatch.find(n => n.publicId === flagged.expense.publicId);
+        
+        if (expenseInBatch) {
+          // Update in-memory batch row
+          expenseInBatch.isReimbursement = flagged.expense.isReimbursement;
+          expenseInBatch.reimbursementRole = flagged.expense.reimbursementRole;
+          expenseInBatch.reimbursementGroupId = flagged.expense.reimbursementGroupId;
+          expenseInBatch.reimbursementShareRatio = flagged.expense.reimbursementShareRatio;
+        } else if (flagged.expense.publicId) {
+          // Update existing row in DB
+          updateReimbursementStmt.run({
+            publicId: flagged.expense.publicId,
+            isReimbursement: 1,
+            reimbursementRole: flagged.expense.reimbursementRole,
+            reimbursementGroupId: flagged.expense.reimbursementGroupId,
+            reimbursementShareRatio: flagged.expense.reimbursementShareRatio,
+          });
+        }
+        
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[reimbursementMatcher] matched', {
+            expenseId: reimbursementMatch.expense.publicId,
+            incomeId: reimbursementMatch.income.publicId,
+            shareRatio: reimbursementMatch.shareRatio,
+            groupId: reimbursementMatch.groupId,
+          });
+        }
+      }
+    }
+    
+    // Apply internal categories for internal transfers (do not override refunds/reimbursements/pass-through)
+    for (const base of normalizedBatch) {
+      if (base.isInternalTransfer && !base.isRefund && !base.isRefunded && !base.isReimbursement) {
+        const cat = (base.category ?? '').trim();
+        const isInternalCat = cat.startsWith('internal:');
+        if (!isInternalCat) {
+          let categoryId: CategoryId;
+          switch (base.internalTransferKind) {
+            case 'savings':
+              categoryId = 'internal:savings' as any;
+              break;
+            case 'wallet':
+              categoryId = 'internal:wallet' as any;
+              break;
+            default:
+              categoryId = 'internal:own-account' as any;
+          }
+          (base as any).category = categoryId;
+          (base as any).categorySource = 'system';
+          (base as any).categoryRuleId = 'internal_transfer:auto';
+        }
+      }
+    }
+    
+    // Insert all normalized rows
+    for (const base of normalizedBatch) {
       const info = insertStmt.run({
         publicId: base.publicId,
         bookingDate: base.bookingDate,
@@ -578,6 +1282,18 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         isTransfer: base.isTransfer ? 1 : 0,
         transferLinkId: base.transferLinkId,
         confidence: base.confidence,
+        isRefund: base.isRefund ? 1 : 0,
+        isRefunded: base.isRefunded ? 1 : 0,
+        refundGroupId: base.refundGroupId,
+        isInternalTransfer: base.isInternalTransfer ? 1 : 0,
+        internalTransferDirection: base.internalTransferDirection,
+        internalTransferKind: base.internalTransferKind,
+        internalTransferGroupId: base.internalTransferGroupId,
+        isReimbursement: base.isReimbursement ? 1 : 0,
+        reimbursementRole: base.reimbursementRole,
+        reimbursementGroupId: base.reimbursementGroupId,
+        reimbursementShareRatio: base.reimbursementShareRatio,
+        bankReferenceId: base.bankReferenceId,
       });
 
       if ((info as any).changes === 1) inserted++;
@@ -610,6 +1326,33 @@ export function getBalance(conn: Database = db) {
 
 export function clearAll(conn: Database = db) {
   conn.exec(`DELETE FROM transactions`)
+}
+
+// Backfill helper to set internal categories for existing internal transfers
+export function backfillInternalTransferCategories(conn: Database = db): number {
+  const rows = conn.prepare(`
+    SELECT id, internalTransferKind
+    FROM transactions
+    WHERE isInternalTransfer = 1
+      AND (category NOT IN ('internal:savings','internal:wallet','internal:own-account') OR category IS NULL)
+      AND (isRefund = 0 OR isRefund IS NULL)
+      AND (isRefunded = 0 OR isRefunded IS NULL)
+      AND (isReimbursement = 0 OR isReimbursement IS NULL)
+  `).all() as Array<{ id: number; internalTransferKind?: string | null }>;
+  if (!rows || rows.length === 0) return 0;
+  const update = conn.prepare(`UPDATE transactions SET category = ?, category_source = 'system', category_rule_id = 'internal_transfer:auto' WHERE id = ?`);
+  let changes = 0;
+  const tx = conn.transaction((batch: typeof rows) => {
+    for (const r of batch) {
+      let cat: string = 'internal:own-account';
+      if ((r.internalTransferKind || '') === 'savings') cat = 'internal:savings';
+      else if ((r.internalTransferKind || '') === 'wallet') cat = 'internal:wallet';
+      const res = update.run(cat, r.id);
+      changes += res?.changes ?? 0;
+    }
+  });
+  tx(rows);
+  return changes;
 }
 
 export function resetDb(conn: Database = db) {
@@ -668,9 +1411,10 @@ export function getLastImport(conn: Database = db) {
       }
     | undefined;
   if (!row) return null;
+  const { id, ...rest } = row;
   return {
-    id: row.id,
-    ...row,
+    id,
+    ...rest,
     warnings: row.warnings ? (JSON.parse(row.warnings) as string[]) : [],
   };
 }
@@ -780,10 +1524,10 @@ export function applyCategoryFeedback(input: { txId: number; newCategory: string
 
 export function fetchTransactionsForMatching(conn: Database = db): { paypal: NormalizedTransaction[]; bank: NormalizedTransaction[] } {
   const paypalRows = conn
-    .prepare(`SELECT publicId, source, sourceProfile, bankProfile, accountId, bookingDate, valueDate, amountCents, currency, payee, counterpartName, memo, category, categoryConfidence, externalId, referenceId, isTransfer, transferLinkId, raw FROM transactions WHERE source = @source AND (transferLinkId IS NULL OR transferLinkId = '')`)
+    .prepare(`SELECT publicId, source, sourceProfile, bankProfile, accountId, bookingDate, valueDate, amountCents, currency, payee, counterpartName, memo, category, categoryConfidence, externalId, referenceId, isTransfer, transferLinkId, isRefund, isRefunded, refundGroupId, isInternalTransfer, internalTransferDirection, internalTransferKind, internalTransferGroupId, isReimbursement, reimbursementRole, reimbursementGroupId, reimbursementShareRatio, bankReferenceId, raw FROM transactions WHERE source = @source AND (transferLinkId IS NULL OR transferLinkId = '')`)
     .all({ source: 'csv_paypal' });
   const bankRows = conn
-    .prepare(`SELECT publicId, source, sourceProfile, bankProfile, accountId, bookingDate, valueDate, amountCents, currency, payee, counterpartName, memo, category, categoryConfidence, externalId, referenceId, isTransfer, transferLinkId, raw FROM transactions WHERE source = @source AND (transferLinkId IS NULL OR transferLinkId = '')`)
+    .prepare(`SELECT publicId, source, sourceProfile, bankProfile, accountId, bookingDate, valueDate, amountCents, currency, payee, counterpartName, memo, category, categoryConfidence, externalId, referenceId, isTransfer, transferLinkId, isRefund, isRefunded, refundGroupId, isInternalTransfer, internalTransferDirection, internalTransferKind, internalTransferGroupId, isReimbursement, reimbursementRole, reimbursementGroupId, reimbursementShareRatio, bankReferenceId, raw FROM transactions WHERE source = @source AND (transferLinkId IS NULL OR transferLinkId = '')`)
     .all({ source: 'csv_bank' });
 
   return {
@@ -824,7 +1568,7 @@ export function markTransactionAsTransfer(params: { publicId: string; transferLi
 
 export function getTransactionByPublicId(publicId: string, conn: Database = db): Transaction | null {
   const row = conn
-    .prepare(`SELECT publicId, source, sourceProfile, accountId, bookingDate, valueDate, amountCents, currency, payee, counterpartName, memo, category, categoryConfidence, externalId, referenceId, isTransfer, transferLinkId, raw FROM transactions WHERE publicId = @publicId LIMIT 1`)
+    .prepare(`SELECT publicId, source, sourceProfile, accountId, bookingDate, valueDate, amountCents, currency, payee, counterpartName, memo, category, categoryConfidence, externalId, referenceId, isTransfer, transferLinkId, isRefund, isRefunded, refundGroupId, isInternalTransfer, internalTransferDirection, internalTransferKind, internalTransferGroupId, isReimbursement, reimbursementRole, reimbursementGroupId, reimbursementShareRatio, bankReferenceId, raw FROM transactions WHERE publicId = @publicId LIMIT 1`)
     .get({ publicId });
   return row ? mapDbRowToCoreTransaction(row) : null;
 }
@@ -847,6 +1591,13 @@ export function insertOverrideRule(rule: Omit<UserOverrideRule, 'createdAt'>, co
     pattern: rule.pattern.toLowerCase(),
     createdAt: new Date().toISOString(),
   };
+}
+
+export function deleteOverrideRule(id: string, conn: Database = db): boolean {
+  const result = conn
+    .prepare(`DELETE FROM user_override_rules WHERE id = @id`)
+    .run({ id });
+  return (result.changes ?? 0) > 0;
 }
 
 export function applyOverrideRuleToTransactions(rule: UserOverrideRule, conn: Database = db): void {
@@ -872,11 +1623,101 @@ export function applyOverrideRuleToTransactions(rule: UserOverrideRule, conn: Da
   conn.prepare(sql).run({ ...params, ruleId: `user_override:${rule.id}` });
 }
 
+export function applyOverrideRuleToExistingTransactions(
+  ruleId: string,
+  conn: Database = db
+): { updatedCount: number } {
+  // Load the rule
+  const ruleRow = conn
+    .prepare(`SELECT id, patternType, pattern, categoryId FROM user_override_rules WHERE id = @id`)
+    .get({ id: ruleId }) as {
+    id: string;
+    patternType: string;
+    pattern: string;
+    categoryId: string;
+  } | undefined;
+
+  if (!ruleRow) {
+    return { updatedCount: 0 };
+  }
+
+  const pattern = ruleRow.pattern.toLowerCase();
+  const categoryId = ruleRow.categoryId;
+  const ruleIdValue = `user_override:${ruleRow.id}`;
+
+  // Build WHERE clause with safety exclusions
+  const exclusionClause = `
+    AND (isRefund = 0 OR isRefund IS NULL)
+    AND (isRefunded = 0 OR isRefunded IS NULL)
+    AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+    AND (isReimbursement = 0 OR isReimbursement IS NULL)
+  `;
+
+  let sql = '';
+  const params: any = { pattern, categoryId, ruleId: ruleIdValue };
+
+  switch (ruleRow.patternType) {
+    case 'payee':
+      // Check both payee and counterpartName for payee rules
+      sql = `
+        UPDATE transactions
+        SET category = @categoryId,
+            category_source = 'user',
+            category_rule_id = @ruleId
+        WHERE (
+          LOWER(COALESCE(payee, '')) LIKE '%' || @pattern || '%'
+          OR LOWER(COALESCE(counterpartName, '')) LIKE '%' || @pattern || '%'
+        )
+        ${exclusionClause}
+      `;
+      break;
+    case 'memo':
+      // Check both memo and purpose for memo rules
+      sql = `
+        UPDATE transactions
+        SET category = @categoryId,
+            category_source = 'user',
+            category_rule_id = @ruleId
+        WHERE (
+          LOWER(COALESCE(memo, '')) LIKE '%' || @pattern || '%'
+          OR LOWER(COALESCE(purpose, '')) LIKE '%' || @pattern || '%'
+        )
+        ${exclusionClause}
+      `;
+      break;
+    case 'iban':
+      sql = `
+        UPDATE transactions
+        SET category = @categoryId,
+            category_source = 'user',
+            category_rule_id = @ruleId
+        WHERE REPLACE(LOWER(COALESCE(counterpartyIban, '')), ' ', '') = @pattern
+        ${exclusionClause}
+      `;
+      break;
+    case 'fingerprint':
+      sql = `
+        UPDATE transactions
+        SET category = @categoryId,
+            category_source = 'user',
+            category_rule_id = @ruleId
+        WHERE publicId = @pattern
+        ${exclusionClause}
+      `;
+      break;
+    default:
+      return { updatedCount: 0 };
+  }
+
+  const result = conn.prepare(sql).run(params);
+  return { updatedCount: result.changes ?? 0 };
+}
+
 function mapDbRowToNormalizedTransaction(row: any): NormalizedTransaction {
   const rawObj = parseRaw(row.raw);
   const metadata = rawObj && rawObj.metadata && typeof rawObj.metadata === 'object' ? normalizeMetadata(rawObj.metadata as Record<string, unknown>) : undefined;
   if (rawObj?.metadata) delete rawObj.metadata;
-  return {
+  const tx: NormalizedTransaction = {
     id: row.publicId,
     bookingDate: row.bookingDate,
     valutaDate: row.valueDate ?? undefined,
@@ -899,13 +1740,31 @@ function mapDbRowToNormalizedTransaction(row: any): NormalizedTransaction {
     externalId: row.externalId ?? null,
     referenceId: row.referenceId ?? null,
     isTransfer: Boolean(row.isTransfer),
-    isInternalTransfer:
-      Boolean(row.isTransfer) &&
-      (row.category === 'transfer_internal' || (row.category ? row.category.startsWith('internal') : false)),
+    isInternalTransfer: Boolean(row.isInternalTransfer) ||
+      (Boolean(row.isTransfer) &&
+      (row.category === 'transfer_internal' || (row.category ? row.category.startsWith('internal') : false))),
     transferLinkId: row.transferLinkId ?? null,
     confidence: row.categoryConfidence ?? null,
     metadata,
+    isRefund: Boolean(row.isRefund),
+    isRefunded: Boolean(row.isRefunded),
+    refundGroupId: row.refundGroupId ?? null,
+    internalTransferDirection: row.internalTransferDirection ?? null,
+    internalTransferKind: row.internalTransferKind ?? null,
+    internalTransferGroupId: row.internalTransferGroupId ?? null,
+    isReimbursement: Boolean(row.isReimbursement),
+    reimbursementRole: row.reimbursementRole ?? null,
+    reimbursementGroupId: row.reimbursementGroupId ?? null,
+    reimbursementShareRatio: row.reimbursementShareRatio ?? null,
+    bankReferenceId: row.bankReferenceId ?? null,
   };
+  
+  // Add categorization explanation
+  const explanation = buildCategorizationExplanation(tx);
+  tx.categorizationReasonCode = explanation.code;
+  tx.categorizationReasonText = explanation.text;
+  
+  return tx;
 }
 
 function mapDbRowToCoreTransaction(row: any): Transaction {
@@ -930,6 +1789,18 @@ function mapDbRowToCoreTransaction(row: any): Transaction {
     isTransferLikeHint: undefined,
     transferLinkId: row.transferLinkId ?? null,
     raw,
+    isRefund: Boolean(row.isRefund),
+    isRefunded: Boolean(row.isRefunded),
+    refundGroupId: row.refundGroupId ?? null,
+    isInternalTransfer: Boolean(row.isInternalTransfer),
+    internalTransferDirection: row.internalTransferDirection ?? null,
+    internalTransferKind: row.internalTransferKind ?? null,
+    internalTransferGroupId: row.internalTransferGroupId ?? null,
+    isReimbursement: Boolean(row.isReimbursement),
+    reimbursementRole: row.reimbursementRole ?? null,
+    reimbursementGroupId: row.reimbursementGroupId ?? null,
+    reimbursementShareRatio: row.reimbursementShareRatio ?? null,
+    bankReferenceId: row.bankReferenceId ?? null,
   };
 }
 

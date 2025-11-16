@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, vi, describe, expect, it } from 'vitest';
 
 import RuleFormDialog, { type RuleFormSubmitValues } from '../RuleFormDialog';
-import type { NormalizationRule } from '../../../api/normalizer';
+import type { ApiResult, NormalizationRule } from '../../../api/normalizer';
 
 const matcherLabels = {
   contains: 'Enthält',
@@ -28,7 +28,9 @@ const baseRule: NormalizationRule = {
 };
 
 const setup = (override?: Partial<NormalizationRule>, rules: NormalizationRule[] = [baseRule]) => {
-  const onSubmit = vi.fn<[], Promise<{ ok: boolean; data?: NormalizationRule; error?: string }>>();
+  const onSubmit = vi
+    .fn<(_values: RuleFormSubmitValues) => Promise<ApiResult<NormalizationRule>>>()
+    .mockResolvedValue({ ok: true, data: baseRule });
   const onClose = vi.fn();
   const initial = { ...baseRule, ...override };
   render(
@@ -71,10 +73,9 @@ describe('RuleFormDialog', () => {
   });
 
   it('submits sanitized values and closes on success', async () => {
-    const onSubmit = vi.fn<
-      [RuleFormSubmitValues],
-      Promise<{ ok: true; data: NormalizationRule }>
-    >().mockResolvedValue({ ok: true, data: baseRule });
+    const onSubmit = vi
+      .fn<(_values: RuleFormSubmitValues) => Promise<ApiResult<NormalizationRule>>>()
+      .mockResolvedValue({ ok: true, data: baseRule });
     const onClose = vi.fn();
 
     render(
@@ -107,7 +108,7 @@ describe('RuleFormDialog', () => {
 
   it('keeps dialog open on submit error', async () => {
     const onSubmit = vi
-      .fn<[RuleFormSubmitValues], Promise<{ ok: false; error: string }>>()
+      .fn<(_values: RuleFormSubmitValues) => Promise<ApiResult<NormalizationRule>>>()
       .mockResolvedValue({ ok: false, error: 'Duplicate rule' });
     const onClose = vi.fn();
 

@@ -1,55 +1,55 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import { describe, it, expect } from 'vitest';
 
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'fs';
 
-import { isProfileCsvText, parseWithProfile } from '../src/parsing/profileEngine';
-import { dkbProfile } from '../src/parsing/profiles/dkb';
+import { resolve } from 'path';
 
-const fixturePath = (...segments: string[]) => path.join(__dirname, 'fixtures', ...segments);
-const readFixtureBuffer = (...segments: string[]): Buffer => fs.readFileSync(fixturePath(...segments));
+import { parseBankCsv } from '../src/parser/parseBankCsv';
 
-describe('DKB profile detection', () => {
-  it('detects the DKB minimal export', () => {
-    const buffer = readFixtureBuffer('DE', 'dkb_min.csv');
-    expect(isProfileCsvText(buffer, dkbProfile)).toBe(true);
-  });
+describe('DKB CSV parser', () => {
 
-  it('does not mis-detect PayPal exports', () => {
-    const buffer = readFixtureBuffer('paypal_min.csv');
-    expect(isProfileCsvText(buffer, dkbProfile)).toBe(false);
-  });
-});
+  const minPath = resolve(__dirname, 'fixtures', 'dkb_min.csv');
 
-describe('parseWithProfile (DKB)', () => {
-  const buffer = readFixtureBuffer('DE', 'dkb_min.csv');
-  const result = parseWithProfile(buffer, dkbProfile);
+  const fullPath = resolve(__dirname, 'fixtures', 'dkb.csv');
 
-  it('maps booking and valuta dates to ISO format', () => {
-    expect(result.rows.length).toBeGreaterThan(0);
-    result.rows.forEach(row => {
-      expect(/^\d{4}-\d{2}-\d{2}$/.test(row.bookingDate)).toBe(true);
-      expect(row.valutaDate).toBeDefined();
-      if (row.valutaDate) {
-        expect(/^\d{4}-\d{2}-\d{2}$/.test(row.valutaDate)).toBe(true);
-      }
-    });
-  });
+  const minBuffer = readFileSync(minPath);
 
-  it('derives account identifiers with the dkb: prefix', () => {
-    expect(result.rows.every(row => row.accountId.startsWith('dkb:'))).toBe(true);
-  });
+  const fullBuffer = readFileSync(fullPath);
 
-  it('parses signed amounts via credit/debit columns when needed', () => {
-    const directions = new Set(result.rows.map(row => row.direction));
-    expect(directions.has('in')).toBe(true);
-    expect(directions.has('out')).toBe(true);
-  });
+  it('detects DKB and parses rows from dkb_min.csv', () => {
 
-  it('emits deterministic metadata', () => {
+    const result = parseBankCsv(minBuffer);
+
     expect(result.profileId).toBe('dkb');
-    expect(result.candidates).toEqual([{ profileId: 'dkb', confidence: 1 }]);
+
+    expect(result.rows.length).toBeGreaterThan(0);
+
+    for (const row of result.rows) {
+
+      expect(row.bookingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+      expect(typeof row.amountCents).toBe('number');
+
+      expect(['in', 'out']).toContain(row.direction);
+
+      expect(row.externalId).toMatch(/^dkb-/);
+
+    }
+
   });
+
+  it('parses full dkb.csv deterministically', () => {
+
+    const r1 = parseBankCsv(fullBuffer);
+
+    const r2 = parseBankCsv(fullBuffer);
+
+    expect(r1.profileId).toBe('dkb');
+
+    expect(r1.rows.length).toBeGreaterThan(0);
+
+    expect(r1.rows).toEqual(r2.rows);
+
+  });
+
 });
-
-

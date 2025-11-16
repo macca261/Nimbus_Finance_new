@@ -33,18 +33,17 @@ export const DashboardBalanceChart: React.FC<DashboardBalanceChartProps> = ({ ba
   );
 
   return (
-    <div className="flex h-full flex-col rounded-3xl border border-slate-200 bg-white/80 shadow-sm shadow-slate-500/10 dark:border-slate-800 dark:bg-slate-900/70">
-      <header className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+    <div className="flex h-full flex-col rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-6">
+      <header className="mb-4 flex items-center justify-between">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Saldo & Cashflow</h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Entwicklung im ausgewählten Zeitraum</p>
+          <h3 className="text-base font-medium text-slate-900 dark:text-slate-100 md:text-lg">Saldo & Cashflow</h3>
         </div>
         <div className="flex rounded-full border border-slate-200 bg-slate-100/60 p-1 text-xs font-medium dark:border-slate-700 dark:bg-slate-900/60">
           <ToggleButton active={view === 'balance'} label="Saldo" onClick={() => setView('balance')} />
           <ToggleButton active={view === 'cashflow'} label="Cashflow" onClick={() => setView('cashflow')} />
         </div>
       </header>
-      <div className="flex-1 p-6">
+      <div className="flex-1">
         {view === 'balance' ? (
           <BalanceAreaChart data={balanceData} loading={loading} />
         ) : (
@@ -86,6 +85,7 @@ function BalanceAreaChart({ data, loading }: { data: { date: string; balance: nu
             width={64}
             tick={{ fontSize: 10, fill: '#64748B' }}
             tickFormatter={value => formatCurrency(Number(value)).replace('€', '')}
+            className="tabular-nums"
           />
           <Tooltip
             contentStyle={{

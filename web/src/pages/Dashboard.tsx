@@ -1,88 +1,59 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '../layout/AppShell';
 import { useDashboardState } from '../hooks/useDashboardState';
-import { DashboardHeader } from '../components/dashboard/DashboardHeader';
-import { DashboardKpiRow } from '../components/dashboard/DashboardKpiRow';
+import { DashboardHeaderCompact } from '../components/dashboard/DashboardHeaderCompact';
+import { KpiCard } from '../components/dashboard/KpiCard';
 import { DashboardBalanceChart } from '../components/dashboard/DashboardBalanceChart';
-import { DashboardCategoryPanel } from '../components/dashboard/DashboardCategoryPanel';
-import { DashboardTiles } from '../components/dashboard/DashboardTiles';
+import { CategoryDonutWithNavigation } from '../components/dashboard/CategoryDonutWithNavigation';
 import { DashboardEmptyState } from '../components/dashboard/DashboardEmptyState';
 import { RecentActivityMini } from '../components/dashboard/RecentActivityMini';
-import { formatCurrency, formatPercent } from '../lib/format';
-import { EngagementStrip } from '../components/dashboard/EngagementStrip';
-import { InsightsRow } from '../components/dashboard/InsightsRow';
+import { formatCurrency, formatPercent, formatDate } from '../lib/format';
+import { GoalsSection } from '../components/dashboard/GoalsSection';
+import { AttentionCards } from '../components/dashboard/AttentionCards';
 import { ResetDbCard } from '../components/dashboard/ResetDbCard';
 import { classnames } from '../ui/tokens';
 import { ManageImportsDialog } from '../components/admin/ManageImportsDialog';
+import { fetchReviewTransactions } from '../api/reviewApi';
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const dashboard = useDashboardState();
   const summary = dashboard.summary;
   const [manageImportsOpen, setManageImportsOpen] = useState(false);
+  const [reviewCounts, setReviewCounts] = useState({
+    uncategorized: 0,
+    lowConfidence: 0,
+  });
+  const [reviewLoading, setReviewLoading] = useState(false);
 
-  const headerSubtitle = useMemo(() => {
-    const accountLabel =
-      dashboard.accountsCount === 1
-        ? '1 Konto'
-        : `${dashboard.accountsCount.toLocaleString('de-DE')} Konten`;
-    const paypalLabel =
-      dashboard.paypalWalletsCount === 1
-        ? '1 PayPal Wallet'
-        : `${dashboard.paypalWalletsCount.toLocaleString('de-DE')} PayPal Wallets`;
-    return `Stand: ${dashboard.selectedPeriodOption.label} · ${accountLabel} · ${paypalLabel}`;
-  }, [dashboard.accountsCount, dashboard.paypalWalletsCount, dashboard.selectedPeriodOption.label]);
+  // Build last import info for header
+  const lastImportInfo = useMemo(() => {
+    if (!summary?.lastImport) return null;
+    const bankName = summary.lastImport.profileId || 'Unbekannt';
+    const count = summary.lastImport.transactionCount ?? 0;
+    const date = formatDate(summary.lastImport.importedAt);
+    return `Letzter Import: ${bankName} · ${count.toLocaleString('de-DE')} Buchungen · ${date}`;
+  }, [summary?.lastImport]);
 
-  const kpiData = useMemo(() => {
-    const income = summary?.kpis.income30d ?? 0;
-    const expenses = summary?.kpis.expenses30d ?? 0;
-    const balance = summary?.kpis.currentBalance ?? 0;
-    const savingsRate = income > 0 ? Math.max(0, Math.min(1, (income - expenses) / income)) : 0;
+  // Navigation helper for Transactions page
+  const navigateToTransactions = useCallback(
+    (params: Record<string, string>) => {
+      const searchParams = new URLSearchParams();
+      Object.entries(params).forEach(([key, value]) => {
+        if (value) searchParams.set(key, value);
+      });
+      navigate(`/transactions?${searchParams.toString()}`);
+    },
+    [navigate],
+  );
 
-    const totalExpenses = (summary?.spendingByCategory ?? []).reduce(
-      (sum, cat) => sum + (cat.amount ?? 0),
-      0,
-    );
-    const fixedAmount = (summary?.spendingByCategory ?? [])
-      .filter(cat => ['subscriptions', 'fees_charges', 'housing:rent', 'housing:utilities'].includes(cat.category))
-      .reduce((sum, cat) => sum + (cat.amount ?? 0), 0);
-    const fixedShare = totalExpenses > 0 ? fixedAmount / totalExpenses : 0;
-
-    return [
-      {
-        id: 'balance',
-        label: 'Aktueller Kontostand',
-        value: formatCurrency(balance),
-        hint: 'Inkl. aller importierten Buchungen',
-      },
-      {
-        id: 'income',
-        label: `Einnahmen (${dashboard.selectedPeriodOption.label})`,
-        value: formatCurrency(income),
-      },
-      {
-        id: 'expenses',
-        label: `Ausgaben (${dashboard.selectedPeriodOption.label})`,
-        value: formatCurrency(expenses),
-      },
-      {
-        id: 'savings',
-        label: 'Sparquote',
-        value: formatPercent(savingsRate),
-        hint:
-          income > 0
-            ? `Ø ${(income - expenses > 0 ? formatCurrency(income - expenses) : formatCurrency(0))} zurückgelegt`
-            : 'Noch nicht genügend Daten',
-      },
-      {
-        id: 'fixed',
-        label: 'Fixkosten-Anteil',
-        value: formatPercent(fixedShare),
-        hint: `${formatCurrency(fixedAmount)} deiner Ausgaben sind wiederkehrend.`,
-      },
-    ];
-  }, [summary, dashboard.selectedPeriodOption.label]);
+  // Get latest transaction date for balance hint
+  const latestTransactionDate = useMemo(() => {
+    if (!summary?.balanceOverTime?.length) return null;
+    const latest = summary.balanceOverTime[summary.balanceOverTime.length - 1];
+    return latest?.date ? formatDate(latest.date) : null;
+  }, [summary?.balanceOverTime]);
 
   const categorySlices = useMemo(
     () =>
@@ -94,28 +65,35 @@ export const Dashboard: React.FC = () => {
     [summary?.spendingByCategory],
   );
 
-  const insights = useMemo(() => {
-    if (!summary?.spendingByCategory?.length) return [];
-    const sorted = [...summary.spendingByCategory].sort((a, b) => b.amount - a.amount);
-    const top = sorted[0];
-    if (!top || top.amount <= 0) return [];
-    const total = sorted.reduce((sum, item) => sum + item.amount, 0);
-    const share = total > 0 ? top.amount / total : 0;
-    return [
-      {
-        title: `Top-Kategorie: ${top.label ?? top.category}`,
-        description: `${formatCurrency(top.amount)} · ${formatPercent(share)} deiner Ausgaben im aktuellen Zeitraum.`,
-      },
-    ];
-  }, [summary?.spendingByCategory]);
+  // Fetch review counts from the review API
+  useEffect(() => {
+    let cancelled = false;
 
-  const reviewCounts = useMemo(() => {
-    const lowConfidence = dashboard.recent.filter(tx => (tx.categoryConfidence ?? 1) < 0.5).length;
-    return {
-      uncategorized: summary?.uncategorizedCount ?? 0,
-      lowConfidence,
+    async function loadReview() {
+      try {
+        setReviewLoading(true);
+        const items = await fetchReviewTransactions();
+        if (cancelled) return;
+
+        const uncategorized = items.filter(tx => !tx.category || tx.category === 'other').length;
+        const lowConfidence = items.filter(tx => (tx.categoryConfidence ?? 0) < 0.4).length;
+
+        setReviewCounts({ uncategorized, lowConfidence });
+      } catch (err) {
+        // Silently fail - review counts are not critical for dashboard
+        console.error('[Dashboard] Failed to load review counts', err);
+      } finally {
+        if (!cancelled) {
+          setReviewLoading(false);
+        }
+      }
+    }
+
+    loadReview();
+    return () => {
+      cancelled = true;
     };
-  }, [dashboard.recent, summary?.uncategorizedCount]);
+  }, []);
 
   if (dashboard.uiState === 'empty') {
     return (
@@ -130,84 +108,141 @@ export const Dashboard: React.FC = () => {
     );
   }
 
+  const income = summary?.kpis.income30d ?? 0;
+  const expenses = summary?.kpis.expenses30d ?? 0;
+  const balance = summary?.kpis.currentBalance ?? 0;
+  const savingsRate = income > 0 ? Math.max(0, Math.min(1, (income - expenses) / income)) : 0;
+  const balanceHint = latestTransactionDate
+    ? `Inklusive aller importierten Konten · Stand: ${latestTransactionDate}`
+    : 'Inklusive aller importierten Konten';
+
   return (
     <AppShell>
-      <div className={classnames.sectionGap}>
-        <DashboardHeader
-          userName={null}
-          subtitle={headerSubtitle}
-          accounts={dashboard.accounts}
-          selectedAccount={dashboard.selectedAccount}
-          onSelectAccount={dashboard.setSelectedAccount}
-          periodOptions={dashboard.periodOptions}
-          selectedPeriod={dashboard.selectedPeriodOption}
-          onSelectPeriod={dashboard.setSelectedPeriod}
-          hasWarnings={dashboard.hasParserWarnings}
-          warningsCount={dashboard.warningsCount}
-          onWarningsClick={() => navigate('/imports')}
-          onUploadClick={() => navigate('/imports')}
-        />
+      <div className="space-y-6 md:space-y-8">
+        {/* Row 0: Header / Filters */}
+        <section>
+          <DashboardHeaderCompact
+            userName={null}
+            accounts={dashboard.accounts}
+            selectedAccount={dashboard.selectedAccount}
+            onSelectAccount={dashboard.setSelectedAccount}
+            periodOptions={dashboard.periodOptions}
+            selectedPeriod={dashboard.selectedPeriodOption}
+            onSelectPeriod={dashboard.setSelectedPeriod}
+            hasWarnings={dashboard.hasParserWarnings}
+            warningsCount={dashboard.warningsCount}
+            onWarningsClick={() => navigate('/imports')}
+            onUploadClick={() => navigate('/imports')}
+            lastImportInfo={lastImportInfo}
+          />
+        </section>
 
-        <ResetDbCard onReset={dashboard.refetch} onManageImports={() => setManageImportsOpen(true)} />
-
+        {/* Error / Early state messages */}
         {dashboard.error ? (
-          <div className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
             {dashboard.error}
           </div>
         ) : null}
 
         {dashboard.uiState === 'early' ? (
-          <div className="rounded-3xl border border-indigo-200 bg-indigo-50 px-5 py-4 text-xs text-indigo-700 shadow-sm dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-200">
+          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-700 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-200">
             Importiere weitere Konten, um ein vollständiges Bild zu erhalten. Jede CSV verbessert deine Analysen.
           </div>
         ) : null}
 
-        <section>
-          <DashboardKpiRow kpis={kpiData} loading={dashboard.loading} />
+        {/* Row 1: KPI Cards */}
+        <section className="grid gap-6 md:grid-cols-12">
+          <div className="md:col-span-3">
+            <KpiCard
+              label="Kontostand (alle Konten)"
+              value={formatCurrency(balance)}
+              hint={balanceHint}
+              isNegative={balance < 0}
+              loading={dashboard.loading}
+            />
+          </div>
+          <div className="md:col-span-3">
+            <KpiCard
+              label={`Einnahmen – ${dashboard.selectedPeriodOption.label}`}
+              value={formatCurrency(income)}
+              loading={dashboard.loading}
+            />
+          </div>
+          <div className="md:col-span-3">
+            <KpiCard
+              label={`Ausgaben – ${dashboard.selectedPeriodOption.label}`}
+              value={formatCurrency(expenses)}
+              isNegative={expenses < 0}
+              loading={dashboard.loading}
+            />
+          </div>
+          <div className="md:col-span-3">
+            <KpiCard
+              label="Sparquote"
+              value={formatPercent(savingsRate)}
+              hint={
+                income > 0
+                  ? `Ø ${income - expenses > 0 ? formatCurrency(income - expenses) : formatCurrency(0)} zurückgelegt`
+                  : 'Noch nicht genügend Daten'
+              }
+              loading={dashboard.loading}
+            />
+          </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-12">
-          <div className="lg:col-span-7 xl:col-span-8">
+        {/* Row 2: Charts */}
+        <section className="grid gap-6 md:grid-cols-12">
+          <div className="md:col-span-8">
             <DashboardBalanceChart
               balance={summary?.balanceOverTime ?? []}
               cashflow={summary?.cashflowByMonth ?? []}
               loading={dashboard.loading}
             />
           </div>
-          <div className="lg:col-span-5 xl:col-span-4">
-            <DashboardCategoryPanel data={categorySlices} loading={dashboard.loading} />
+          <div className="md:col-span-4">
+            <CategoryDonutWithNavigation
+              data={categorySlices}
+              loading={dashboard.loading}
+              dateRangeLabel={dashboard.selectedPeriodOption.label}
+              onCategoryClick={categoryId => navigateToTransactions({ category: categoryId })}
+            />
           </div>
         </section>
 
-        <DashboardTiles
-          subscriptions={summary?.subscriptions ?? []}
-          review={reviewCounts}
-          dataQuality={{
-            lastImport: summary?.lastImport,
-            warningsCount: dashboard.warningsCount,
-            importsCount: dashboard.importsCount,
-          }}
-          insights={insights}
-          onOpenSubscriptions={() => navigate('/transactions')}
-          onOpenReview={() => navigate('/transactions')}
-          onOpenImports={() => navigate('/imports')}
-        />
+        {/* Row 3: Attention & Actions */}
+        <section>
+          <AttentionCards
+            reviewCounts={reviewCounts}
+            reviewLoading={reviewLoading}
+            spendingByCategory={summary?.spendingByCategory ?? []}
+            dateRangeLabel={dashboard.selectedPeriodOption.label}
+            onNavigateToTransactions={navigateToTransactions}
+          />
+        </section>
 
-        <InsightsRow
-          subscriptions={summary?.subscriptions ?? []}
-          taxHints={summary?.potentialTaxRelevant ?? []}
-          cashflowByMonth={summary?.cashflowByMonth ?? []}
-          uncategorizedCount={summary?.uncategorizedCount ?? 0}
-        />
+        {/* Row 4: Goals & Activity */}
+        <section className="grid gap-6 md:grid-cols-12">
+          <div className="md:col-span-6">
+            <GoalsSection
+              currentBalance={summary?.kpis.currentBalance ?? 0}
+              achievements={dashboard.achievements}
+              cashflowByMonth={summary?.cashflowByMonth ?? []}
+            />
+          </div>
+          <div className="md:col-span-6">
+            <RecentActivityMini
+              transactions={dashboard.recent}
+              loading={dashboard.loading && !dashboard.recent.length}
+            />
+          </div>
+        </section>
 
-        <EngagementStrip
-          achievements={dashboard.achievements}
-          subscriptions={summary?.subscriptions ?? []}
-          cashflowByMonth={summary?.cashflowByMonth ?? []}
-          currentBalance={summary?.kpis.currentBalance ?? 0}
-        />
-
-        <RecentActivityMini transactions={dashboard.recent} loading={dashboard.loading && !dashboard.recent.length} />
+        {/* Admin controls - only in dev, at bottom */}
+        {import.meta.env.DEV && (
+          <section>
+            <ResetDbCard onReset={dashboard.refetch} onManageImports={() => setManageImportsOpen(true)} />
+          </section>
+        )}
       </div>
       <ManageImportsDialog
         open={manageImportsOpen}

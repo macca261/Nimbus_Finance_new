@@ -3,7 +3,7 @@ import { parse as parseCsvSync } from 'csv-parse/sync';
 import type { ParsedRow, ParseResult, DetectionCandidate } from '../types';
 import { tryDecodeBuffer, normalizeHeader } from '../../parser/utils';
 
-export const id = 'sparkasse_de' as const;
+export const id = 'sparkasse' as const;
 
 type RecordRow = Record<string, string>;
 
@@ -60,15 +60,49 @@ export function detect(text: string): { hit: boolean; confidence: number } {
 
   for (const line of lines) {
     const hdr = line.replace(/"/g, '').replace(/\s+/g, '').toLowerCase();
+    
+    // Sparkasse-specific detection: look for distinctive header combinations
+    // Key differentiators from Deutsche Bank:
+    // 1. Sparkasse has "Buchungstext" (very common in Sparkasse exports)
+    // 2. Sparkasse has "Umsatz" (not "Umsatz in EUR" like Deutsche Bank)
+    // 3. Sparkasse has "Wertstellung" (value date field)
+    // 4. Sparkasse has "Auftraggeber/Empfänger" with slash
+    
+    const hasBuchungstag = hdr.includes('buchungstag');
+    const hasWertstellung = hdr.includes('wertstellung');
+    const hasBuchungstext = hdr.includes('buchungstext');
+    const hasVerwendungszweck = hdr.includes('verwendungszweck');
+    const hasUmsatz = hdr.includes('umsatz') && !hdr.includes('umsatzineur');
+    const hasBetrag = hdr.includes('betrag');
+    const hasCounterparty = 
+      hdr.includes('auftraggeber/empfänger') ||
+      hdr.includes('auftraggeber/empfaenger') ||
+      hdr.includes('auftraggeberempfänger');
+    
+    // Strong Sparkasse match: has Buchungstag, Wertstellung, Buchungstext, and Umsatz (not "Umsatz in EUR")
+    if (hasBuchungstag && hasWertstellung && hasBuchungstext && hasUmsatz && hasCounterparty) {
+      return { hit: true, confidence: 1 }; // Maximum confidence for distinctive Sparkasse header
+    }
+    
+    // Good Sparkasse match: has core fields including Buchungstext (Sparkasse-specific)
+    if (hasBuchungstag && hasBuchungstext && (hasUmsatz || hasBetrag) && hasCounterparty) {
+      return { hit: true, confidence: 1 }; // High confidence for Sparkasse with Buchungstext
+    }
+    
+    // Basic match: has core fields (but less specific, might match other banks)
     const hasCore =
-      hdr.includes('buchungstag') &&
-      ((hdr.includes('umsatz') && !hdr.includes('umsatzineur')) || hdr.includes('betrag')) &&
-      (hdr.includes('verwendungszweck') || hdr.includes('buchungstext')) &&
-      (hdr.includes('auftraggeber/empfänger') ||
-        hdr.includes('auftraggeber/empfaenger') ||
-        hdr.includes('auftraggeberempfänger'));
+      hasBuchungstag &&
+      (hasUmsatz || hasBetrag) &&
+      (hasVerwendungszweck || hasBuchungstext) &&
+      hasCounterparty;
 
-    if (hasCore) return { hit: true, confidence: 1 };
+    if (hasCore) {
+      // If it has Buchungstext, it's more likely Sparkasse
+      if (hasBuchungstext) {
+        return { hit: true, confidence: 0.95 };
+      }
+      return { hit: true, confidence: 0.90 };
+    }
   }
 
   return { hit: false, confidence: 0 };
@@ -141,6 +175,24 @@ export function parse(fileBuffer: Buffer): ParseResult {
 
     const direction: ParsedRow['direction'] = amountCents >= 0 ? 'in' : 'out';
 
+    // Generate externalId: deterministic hash based on transaction attributes
+    const externalIdBase = [
+      id,
+      bookingDate,
+      amountCents,
+      currency,
+      type.slice(0, 64),
+      memo.slice(0, 64),
+      counterparty?.slice(0, 64) || '',
+    ].join('|');
+    let hash = 0;
+    for (let i = 0; i < externalIdBase.length; i++) {
+      const chr = externalIdBase.charCodeAt(i);
+      hash = (hash << 5) - hash + chr;
+      hash |= 0;
+    }
+    const externalId = `${id}-${bookingDate}-${Math.abs(hash)}`;
+
     rows.push({
       bookingDate,
       valutaDate,
@@ -153,6 +205,7 @@ export function parse(fileBuffer: Buffer): ParseResult {
       counterpartyIban: null,
       mcc: null,
       reference: null,
+      externalId,
       rawText,
       raw,
     });

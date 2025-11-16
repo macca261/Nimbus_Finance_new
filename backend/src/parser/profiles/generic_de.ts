@@ -8,6 +8,7 @@ import {
   valueByIncludes,
   valueFor,
 } from './utils';
+import { stripBankReference } from '../../categorization/textPreprocessor';
 
 const HEADER_KEYWORDS = ['buchung', 'datum', 'betrag', 'verwendungszweck'];
 
@@ -57,13 +58,16 @@ export const genericDeProfile: BankProfile = {
       valueByIncludes(record, ['verwendungszweck', 'buchungstext', 'beschreibung', 'zweck']) ||
       valueFor(record, ['Beschreibung']);
 
-    const rawText = buildRawText(record, [
+    const rawTextOriginal = buildRawText(record, [
       'Verwendungszweck',
       'Buchungstext',
       'Beschreibung',
       'Zweck',
       'Text',
     ]);
+    
+    // Extract bank reference ID and clean text
+    const { cleanText: rawText, bankReferenceId } = stripBankReference(rawTextOriginal);
 
     const parsed: ParsedRow = {
       bookingDate,
@@ -78,6 +82,7 @@ export const genericDeProfile: BankProfile = {
       mcc: null,
       reference: reference || null,
       rawText,
+      bankReferenceId: bankReferenceId || null,
       raw: { ...record },
     };
 

@@ -19,17 +19,91 @@ const upload = multer({
 export const importRouter = Router();
 
 const handleImport: RequestHandler = async (req, res) => {
+  const startTime = Date.now();
+  let fileBytes = 0;
+  let profileId = 'unknown';
+  let rowCount = 0;
+  let inserted = 0;
+
   try {
-    if (!req.file?.buffer || req.file.buffer.length === 0) {
+    console.info('[import] start', {
+      hasFile: !!req.file,
+      fieldName: req.file?.fieldname,
+      fileName: req.file?.originalname,
+      fileSize: req.file?.size,
+    });
+
+    // Validate file field name is exactly "file"
+    if (!req.file) {
+      console.warn('[import] no file field in request');
       return res.status(400).json({
         code: 'BAD_REQUEST',
-        message: 'Keine Datei zum Import übermittelt.',
+        message: 'No file uploaded',
       });
     }
 
+    if (req.file.fieldname !== 'file') {
+      console.warn('[import] wrong field name', { fieldname: req.file.fieldname });
+      return res.status(400).json({
+        code: 'BAD_REQUEST',
+        message: `Expected field name "file", got "${req.file.fieldname}"`,
+      });
+    }
+
+    if (!req.file.buffer || req.file.buffer.length === 0) {
+      console.warn('[import] empty buffer');
+      return res.status(400).json({
+        code: 'BAD_REQUEST',
+        message: 'No file uploaded',
+      });
+    }
+
+    fileBytes = req.file.buffer.length;
+    console.info('[import] received file', {
+      bytes: fileBytes,
+      fileName: req.file.originalname,
+      mimetype: req.file.mimetype,
+    });
+
     const buffer = req.file.buffer;
     const hint = typeof req.query.bank === 'string' ? req.query.bank : undefined;
-    const result = await parseBankCsv(buffer, hint);
+
+    let result;
+    try {
+      result = await parseBankCsv(buffer, hint);
+      profileId = result.profileId;
+      rowCount = result.rows.length;
+      console.info('[import] parsed', {
+        profileId: result.profileId,
+        confidence: result.confidence,
+        rowCount: result.rows.length,
+        warnings: result.warnings?.length ?? 0,
+      });
+    } catch (parseError) {
+      console.error('[import] parse error', {
+        error: parseError instanceof Error ? parseError.message : String(parseError),
+        stack: parseError instanceof Error ? parseError.stack : undefined,
+      });
+
+      if (parseError instanceof PayPalParseError) {
+        return res.status(400).json({
+          code: 'PAYPAL_PARSE_ERROR',
+          message: parseError.message,
+          details: parseError.details ?? null,
+        });
+      }
+      if (parseError instanceof ParseBankCsvError) {
+        return res.status(400).json({
+          code: 'BANK_PARSE_ERROR',
+          message: parseError.message,
+          hints: parseError.hints.length ? parseError.hints : undefined,
+          candidates: parseError.candidates.length ? parseError.candidates : undefined,
+          warnings: [],
+        });
+      }
+      // Re-throw unknown parse errors to be caught by outer catch
+      throw parseError;
+    }
 
     if (!result.rows.length) {
       return res.status(400).json({
@@ -49,87 +123,159 @@ const handleImport: RequestHandler = async (req, res) => {
     const overrideRules = getAllOverrideRules(db);
 
     const normalized = result.rows.map((row, index) => {
-      const combinedText = [row.rawText, row.counterparty, row.reference]
-        .filter((value): value is string => Boolean(value && value.trim()))
-        .join(' ');
-      const source = result.profileId === 'paypal' ? 'csv_paypal' : 'csv_bank';
-      const rawPayload: Record<string, unknown> = {
-        counterpartyIban: row.counterpartyIban,
-        accountIban: row.accountIban,
-      };
-      if (row.raw) {
-        Object.assign(rawPayload, row.raw);
-      }
-      const rawRecord = row.raw ? (row.raw as Record<string, string | undefined>) : undefined;
-      const extractRawField = (key: string): string | null => {
-        if (!rawRecord) return null;
-        const value = rawRecord[key];
-        if (typeof value === 'string' && value.trim().length > 0) {
-          return value;
+      try {
+        const combinedText = [row.rawText, row.counterparty, row.reference]
+          .filter((value): value is string => Boolean(value && value.trim()))
+          .join(' ');
+        const source = result.profileId === 'paypal' ? 'csv_paypal' : 'csv_bank';
+        const rawPayload: Record<string, unknown> = {
+          counterpartyIban: row.counterpartyIban,
+          accountIban: row.accountIban,
+        };
+        if (row.raw) {
+          Object.assign(rawPayload, row.raw);
         }
-        return null;
-      };
-      const externalId = extractRawField('externalId');
-      const relatedExternal = extractRawField('relatedExternalId');
+        const rawRecord = row.raw ? (row.raw as Record<string, string | undefined>) : undefined;
+        const extractRawField = (key: string): string | null => {
+          if (!rawRecord) return null;
+          const value = rawRecord[key];
+          if (typeof value === 'string' && value.trim().length > 0) {
+            return value;
+          }
+          return null;
+        };
+        const externalId = extractRawField('externalId');
+        const relatedExternal = extractRawField('relatedExternalId');
 
-      const txCandidate: Transaction = {
-        id: `${result.profileId}:${row.bookingDate}:${row.amountCents}:${index}`,
-        source,
-        sourceProfile: result.profileId,
-        accountId: row.accountId ?? row.accountIban ?? (result.profileId === 'paypal' ? 'paypal:wallet' : 'bank:unknown'),
-        bookingDate: row.bookingDate,
-        valueDate: row.valutaDate ?? row.bookingDate,
-        amountCents: row.amountCents,
-        currency: row.currency,
-        payee: row.counterparty ?? null,
-        counterparty: row.counterparty ?? null,
-        memo: row.rawText,
-        categoryId: undefined,
-        confidence: undefined,
-        externalId,
-        referenceId: row.reference ?? relatedExternal ?? null,
-        isTransfer: false,
-        transferLinkId: null,
-        raw: rawPayload,
-      };
-      const overrideMatch = findMatchingOverride(txCandidate, overrideRules);
-      const category = categorize({
-        text: combinedText,
-        amount: row.amountCents / 100,
-        amountCents: row.amountCents,
-        iban: row.accountIban ?? null,
-        counterpart: row.counterparty ?? null,
-        payee: row.counterparty ?? null,
-        memo: row.rawText,
-        source,
-        transaction: txCandidate,
-        overrideMatch: overrideMatch ? { ruleId: overrideMatch.rule.id, categoryId: overrideMatch.categoryId } : undefined,
+        const txCandidate: Transaction = {
+          id: `${result.profileId}:${row.bookingDate}:${row.amountCents}:${index}`,
+          source,
+          sourceProfile: result.profileId,
+          accountId: row.accountId ?? row.accountIban ?? (result.profileId === 'paypal' ? 'paypal:wallet' : 'bank:unknown'),
+          bookingDate: row.bookingDate,
+          valueDate: row.valutaDate ?? row.bookingDate,
+          amountCents: row.amountCents,
+          currency: row.currency,
+          payee: row.counterparty ?? null,
+          counterparty: row.counterparty ?? null,
+          memo: row.rawText,
+          categoryId: undefined,
+          confidence: undefined,
+          externalId,
+          referenceId: row.reference ?? relatedExternal ?? null,
+          isTransfer: false,
+          transferLinkId: null,
+          raw: rawPayload,
+        };
+        const overrideMatch = findMatchingOverride(txCandidate, overrideRules);
+        // Pass separate fields instead of combined text to allow proper rule matching
+        // The categorization engine needs rawText, counterparty, and reference separately
+        const category = categorize({
+          text: row.rawText ?? '', // Use rawText directly, not combined text
+          amount: row.amountCents / 100,
+          amountCents: row.amountCents,
+          iban: row.accountIban ?? null,
+          counterpart: row.counterparty ?? null,
+          payee: row.counterparty ?? null,
+          memo: row.rawText, // Also pass as memo for backward compatibility
+          source,
+          transaction: txCandidate,
+          overrideMatch: overrideMatch ? { ruleId: overrideMatch.rule.id, categoryId: overrideMatch.categoryId } : undefined,
+        });
+        
+        // DEV: Debug logging for categorization (remove or guard with NODE_ENV later)
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[categorize-debug]', {
+            bookingDate: row.bookingDate,
+            amountCents: row.amountCents,
+            merchant: row.counterparty ?? null,
+            rawText: row.rawText ?? null,
+            combinedText: combinedText,
+            categoryId: category.category,
+            categorySource: category.source,
+            categoryConfidence: category.confidence,
+            ruleId: category.ruleId,
+          });
+        }
+        
+        return toNormalizedTransaction(row, result.profileId, category);
+      } catch (categorizeError) {
+        // Log and continue with categorySource='unknown' instead of 500
+        console.warn('[import] categorization failed for row', {
+          index,
+          error: categorizeError instanceof Error ? categorizeError.message : String(categorizeError),
+          bookingDate: row.bookingDate,
+          amountCents: row.amountCents,
+        });
+        // Return row with unknown category
+        return toNormalizedTransaction(row, result.profileId, {
+          category: 'other',
+          confidence: 0.1,
+          source: 'fallback',
+        });
+      }
+    });
+
+    let diagnostics;
+    try {
+      diagnostics = persistTransactions({
+        profileId: result.profileId,
+        confidence: result.confidence,
+        filename: importFile,
+        transactions: normalized,
+        db,
+        batchId,
       });
-      return toNormalizedTransaction(row, result.profileId, category);
+      inserted = diagnostics.inserted;
+      console.info('[import] persisted', {
+        inserted: diagnostics.inserted,
+        duplicates: diagnostics.duplicates,
+        skipped: diagnostics.skipped,
+        reasons: diagnostics.reasons,
+      });
+    } catch (persistError) {
+      console.error('[import] persist error', {
+        error: persistError instanceof Error ? persistError.message : String(persistError),
+        stack: persistError instanceof Error ? persistError.stack : undefined,
+      });
+      // If it's a known duplicate-only scenario, return IMPORT_EMPTY
+      if (persistError instanceof Error && persistError.message.includes('duplicate')) {
+        return res.status(400).json({
+          code: 'IMPORT_EMPTY',
+          message: 'Keine gültigen Umsätze importiert.',
+          profileId: result.profileId,
+          confidence: result.confidence,
+          rowCount: result.rows.length,
+          reasons: ['Alle Transaktionen waren Duplikate'],
+          warnings: result.warnings ?? [],
+          candidates: result.candidates,
+        });
+      }
+      // Re-throw to be caught by outer catch
+      throw persistError;
+    }
+
+    try {
+      runTransferMatching(db);
+    } catch (matchingError) {
+      // Transfer matching errors shouldn't fail the import
+      console.warn('[import] transfer matching failed', {
+        error: matchingError instanceof Error ? matchingError.message : String(matchingError),
+      });
+    }
+
+    const duration = Date.now() - startTime;
+    console.info('[import] complete', {
+      profileId: diagnostics.profileId,
+      confidence: diagnostics.confidence,
+      rowCount: diagnostics.rowCount,
+      inserted: diagnostics.inserted,
+      duplicates: diagnostics.duplicates,
+      skipped: diagnostics.skipped,
+      file: importFile,
+      duration: `${duration}ms`,
+      reasons: diagnostics.reasons.join(' | '),
     });
-
-    const diagnostics = persistTransactions({
-      profileId: result.profileId,
-      confidence: result.confidence,
-      filename: importFile,
-      transactions: normalized,
-      db,
-      batchId,
-    });
-
-    runTransferMatching(db);
-
-    console.log(
-      '[import] profile=%s confidence=%d rows=%d inserted=%d dup=%d skipped=%d file=%s reasons=%s',
-      diagnostics.profileId,
-      diagnostics.confidence,
-      diagnostics.rowCount,
-      diagnostics.inserted,
-      diagnostics.duplicates,
-      diagnostics.skipped,
-      importFile,
-      diagnostics.reasons.join(' | '),
-    );
 
     if (diagnostics.inserted === 0) {
       return res.status(400).json({
@@ -176,15 +322,24 @@ const handleImport: RequestHandler = async (req, res) => {
       normalizerRulesActive: diagnostics.normalizerRulesActive,
     });
   } catch (error) {
+    const duration = Date.now() - startTime;
     const err = error as { name?: string; message?: string; details?: unknown; stack?: string };
-    // eslint-disable-next-line no-console
+
     console.error('[import] failed', {
-      name: err?.name,
-      message: err?.message,
-      details: err?.details,
-      stack: err?.stack,
+      duration: `${duration}ms`,
+      fileBytes,
+      profileId,
+      rowCount,
+      inserted,
+      error: {
+        name: err?.name ?? 'UnknownError',
+        message: err?.message ?? String(error),
+        stack: err?.stack,
+        details: err?.details,
+      },
     });
 
+    // These should have been caught earlier, but handle them here as fallback
     if (error instanceof PayPalParseError) {
       return res.status(400).json({
         code: 'PAYPAL_PARSE_ERROR',
@@ -201,6 +356,11 @@ const handleImport: RequestHandler = async (req, res) => {
         warnings: [],
       });
     }
+
+    // Unknown error - log full stack for debugging
+    const stackLines = err?.stack?.split('\n') ?? [];
+    console.error('[import] unknown error stack (first 10 lines):', stackLines.slice(0, 10).join('\n'));
+
     return res.status(500).json({
       code: 'IMPORT_FAILED',
       message: 'Unbekannter Importfehler',
@@ -208,7 +368,19 @@ const handleImport: RequestHandler = async (req, res) => {
   }
 };
 
-importRouter.post('/', upload.single('file'), handleImport);
+// Multer error handler
+const multerErrorHandler = (err: any, req: any, res: any, next: any) => {
+  if (err) {
+    console.warn('[import] multer error', { error: err.message });
+    return res.status(400).json({
+      code: 'BAD_REQUEST',
+      message: 'No file uploaded',
+    });
+  }
+  next();
+};
+
+importRouter.post('/', upload.single('file'), multerErrorHandler, handleImport);
 
 importRouter.get('/history', (req, res) => {
   const db = (req.app as any)?.locals?.db ?? defaultDb;

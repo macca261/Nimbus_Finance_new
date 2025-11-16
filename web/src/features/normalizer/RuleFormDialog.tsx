@@ -101,6 +101,8 @@ const RuleFormDialog: React.FC<RuleFormDialogProps> = ({
   const [errors, setErrors] = useState<RuleFormErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const patternInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -108,6 +110,11 @@ const RuleFormDialog: React.FC<RuleFormDialogProps> = ({
       setErrors({});
       setSubmitting(false);
       setWarnings([]);
+
+      const focusTimer = window.setTimeout(() => {
+        patternInputRef.current?.focus();
+      }, 50);
+      return () => window.clearTimeout(focusTimer);
     }
   }, [open, initial]);
 
@@ -155,15 +162,55 @@ const RuleFormDialog: React.FC<RuleFormDialogProps> = ({
     setWarnings(nextWarnings);
   }, [existingRules, initial.id, values.categoryHint, values.matcher, values.normalizeTo, values.pattern]);
 
-  const handleChange = (field: keyof RuleFormValues) => (
-    event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
-  ) => {
-    const { value, type, checked } = event.currentTarget;
-    setValues(prev => ({
-      ...prev,
-      [field]: type === 'checkbox' ? checked : value,
-    }));
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+
+    if (event.key !== 'Tab' || !formRef.current) {
+      return;
+    }
+
+    const focusable = Array.from(
+      formRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusable.length === 0) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement as HTMLElement | null;
+
+    if (event.shiftKey) {
+      if (active === first || !active) {
+        event.preventDefault();
+        last.focus();
+      }
+    } else if (active === last) {
+      event.preventDefault();
+      first.focus();
+    }
   };
+
+  const warningId = warnings.length > 0 ? 'rule-form-warnings' : undefined;
+
+  const handleChange =
+    (field: keyof RuleFormValues) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+      const target = event.currentTarget;
+      const nextValue =
+        target instanceof HTMLInputElement && target.type === 'checkbox'
+          ? target.checked
+          : target.value;
+
+      setValues(prev => ({
+        ...prev,
+        [field]: nextValue,
+      }));
+    };
 
   const title = useMemo(
     () => (mode === 'create' ? 'Neue Regel anlegen' : 'Regel bearbeiten'),
@@ -200,9 +247,10 @@ const RuleFormDialog: React.FC<RuleFormDialogProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="rule-form-dialog-title"
+      onKeyDown={handleKeyDown}
     >
       <div className="w-full max-w-xl rounded-2xl border border-slate-200/80 bg-white shadow-xl shadow-slate-900/10 dark:border-slate-800/70 dark:bg-slate-900">
-        <form onSubmit={handleSubmit}>
+        <form ref={formRef} onSubmit={handleSubmit}>
           <header className="flex items-center justify-between border-b border-slate-200/70 px-6 py-4 dark:border-slate-800/70">
             <div>
               <h2 id="rule-form-dialog-title" className="text-lg font-semibold text-slate-900 dark:text-slate-100">
@@ -228,7 +276,10 @@ const RuleFormDialog: React.FC<RuleFormDialogProps> = ({
               </div>
             ) : null}
           {warnings.length > 0 ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+            <div
+              id={warningId}
+              className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
+            >
               <p className="font-medium">Hinweise:</p>
               <ul className="mt-1 list-disc space-y-1 pl-4">
                 {warnings.map(warning => (
@@ -291,6 +342,8 @@ const RuleFormDialog: React.FC<RuleFormDialogProps> = ({
                   type="text"
                   value={values.pattern}
                   onChange={handleChange('pattern')}
+                  ref={patternInputRef}
+                  aria-describedby={warningId}
                   className="rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
                   placeholder="z. B. uber"
                 />

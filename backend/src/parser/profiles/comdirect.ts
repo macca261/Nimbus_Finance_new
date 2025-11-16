@@ -8,6 +8,7 @@ import {
   valueByIncludes,
   valueFor,
 } from './utils';
+import { stripBankReference } from '../../categorization/textPreprocessor';
 
 const HEADER_KEYWORDS = ['buchungstag', 'wertstellung', 'umsatz in eur', 'buchungstext'];
 
@@ -52,13 +53,16 @@ export const comdirectProfile: BankProfile = {
     const counterpartyIban = valueByIncludes(record, ['iban']);
     const reference = valueByIncludes(record, ['verwendungszweck', 'buchungstext', 'vorgang']);
 
-    const rawText = buildRawText(record, [
+    const rawTextOriginal = buildRawText(record, [
       'Buchungstext',
       'Vorgang',
       'Verwendungszweck',
       'Notiz',
       'Kategorie',
     ]);
+    
+    // Extract bank reference ID and clean text
+    const { cleanText: rawText, bankReferenceId } = stripBankReference(rawTextOriginal);
 
     const parsed: ParsedRow = {
       bookingDate,
@@ -73,6 +77,7 @@ export const comdirectProfile: BankProfile = {
       mcc: null,
       reference: reference || null,
       rawText,
+      bankReferenceId: bankReferenceId || null,
       raw: { ...record },
     };
 

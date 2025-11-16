@@ -11,11 +11,34 @@ function getLatestYm(req: any): string | null {
   return row?.ym ?? null;
 }
 
+// Helper to build refund exclusion clause
+function getRefundExclusionClause(includeRefunds: boolean): string {
+  if (includeRefunds) return '';
+  return 'AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)';
+}
+
+// Helper to build internal transfer exclusion clause
+function getInternalTransferExclusionClause(includeInternalTransfers?: boolean): string {
+  if (includeInternalTransfers) return '';
+  return 'AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)';
+}
+
+// Helper to build pass-through exclusion clause
+function getPassThroughExclusionClause(includePassThrough?: boolean): string {
+  if (includePassThrough) return '';
+  return 'AND (isPassThrough = 0 OR isPassThrough IS NULL)';
+}
 // GET /api/summary/balance -> { data: { balanceCents, currency } }
 summary.get('/balance', (req, res) => {
   try {
     const db = (req.app as any).locals.db;
-    const totalRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions`).get() as { sum?: number };
+    const includeRefunds = (req.query as any)?.includeRefunds === 'true';
+    const includeInternalTransfers = (req.query as any)?.includeInternalTransfers === 'true';
+    const includePassThrough = (req.query as any)?.includePassThrough === 'true';
+    const refundClause = getRefundExclusionClause(includeRefunds);
+    const internalTransferClause = getInternalTransferExclusionClause(includeInternalTransfers);
+    const passThroughClause = getPassThroughExclusionClause(includePassThrough);
+    const totalRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions WHERE 1=1 ${refundClause} ${internalTransferClause} ${passThroughClause}`).get() as { sum?: number };
     const payload: { balanceCents: number; currency: string; month?: string; monthNetCents?: number } = {
       balanceCents: totalRow?.sum ?? 0,
       currency: 'EUR',
@@ -23,7 +46,7 @@ summary.get('/balance', (req, res) => {
     const qMonth = (req.query as any)?.month as string | undefined;
     if (qMonth) {
       const { start, end, month } = getMonthRange(qMonth);
-      const monthRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions WHERE bookingDate BETWEEN ? AND ?`).get(start, end) as { sum?: number };
+      const monthRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions WHERE bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause}`).get(start, end) as { sum?: number };
       payload.month = month;
       payload.monthNetCents = monthRow?.sum ?? 0;
     }
@@ -41,17 +64,47 @@ summary.get('/month', (req, res) => {
     if (!fallback) return res.json({ month: null, incomeCents: 0, expenseCents: 0 });
     const { start, end, month } = getMonthRange(fallback);
     const db = (req.app as any).locals.db;
+    const includeRefunds = (req.query as any)?.includeRefunds === 'true';
+    const includeInternalTransfers = (req.query as any)?.includeInternalTransfers === 'true';
+    const refundClause = getRefundExclusionClause(includeRefunds);
+    const internalTransferClause = getInternalTransferExclusionClause(includeInternalTransfers);
     const inc = db.prepare(`
       SELECT COALESCE(SUM(amountCents),0) AS sum
       FROM transactions
-      WHERE amountCents > 0 AND bookingDate BETWEEN ? AND ?
+      WHERE amountCents > 0 AND bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause}
     `).get(start, end) as { sum?: number };
     const exp = db.prepare(`
       SELECT COALESCE(SUM(amountCents),0) AS sum
       FROM transactions
-      WHERE amountCents < 0 AND bookingDate BETWEEN ? AND ?
+      WHERE amountCents < 0 AND bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause}
     `).get(start, end) as { sum?: number };
-    res.json({ month, incomeCents: inc?.sum ?? 0, expenseCents: Math.abs(exp?.sum ?? 0) });
+    
+    // Calculate reimbursement offsets for this month
+    const reimbursementTotal = db.prepare(`
+      SELECT COALESCE(SUM(i.amountCents), 0) AS sum
+      FROM transactions e
+      INNER JOIN transactions i ON e.reimbursementGroupId = i.reimbursementGroupId
+        AND e.reimbursementRole = 'payer'
+        AND i.reimbursementRole = 'receiver'
+      WHERE e.bookingDate BETWEEN ? AND ?
+        AND e.isReimbursement = 1
+        AND i.isReimbursement = 1
+        ${refundClause.replace('AND', 'AND e.')}
+        ${internalTransferClause.replace('AND', 'AND e.')}
+    `).get(start, end) as { sum?: number };
+    
+    const rawExpenseCents = Math.abs(exp?.sum ?? 0);
+    const reimbursementsInCents = Math.trunc(reimbursementTotal?.sum ?? 0);
+    const netExpenseCents = Math.max(0, rawExpenseCents - reimbursementsInCents);
+    
+    res.json({
+      month,
+      incomeCents: inc?.sum ?? 0,
+      expenseCents: rawExpenseCents,
+      rawExpenseCents,
+      netExpenseCents,
+      reimbursementsInCents,
+    });
   } catch {
     res.json({ month: null, incomeCents: 0, expenseCents: 0 });
   }
@@ -62,13 +115,19 @@ summary.get('/categories', (req, res) => {
   try {
     const db = (req.app as any).locals.db;
     const monthParam = (req.query as any)?.month as string | undefined;
+    const includeRefunds = (req.query as any)?.includeRefunds === 'true';
+    const includeInternalTransfers = (req.query as any)?.includeInternalTransfers === 'true';
+    const refundClause = getRefundExclusionClause(includeRefunds);
+    const internalTransferClause = getInternalTransferExclusionClause(includeInternalTransfers);
     const hasMonth = Boolean(monthParam);
     const params: unknown[] = [];
     let whereClause = '';
     if (hasMonth) {
       const { start, end } = getMonthRange(monthParam);
-      whereClause = 'WHERE bookingDate BETWEEN ? AND ?';
+      whereClause = `WHERE bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause}`;
       params.push(start, end);
+    } else {
+      whereClause = `WHERE 1=1 ${refundClause} ${internalTransferClause} ${passThroughClause}`;
     }
     const sql = `
       SELECT
@@ -82,13 +141,49 @@ summary.get('/categories', (req, res) => {
       LIMIT 50
     `;
     const rows = db.prepare(sql).all(...params) as { category: string; spendCents: number | null; incomeCents: number | null }[];
+    
+    // Calculate reimbursement offsets per category
+    let reimbursementWhere = '';
+    if (hasMonth) {
+      reimbursementWhere = `WHERE e.bookingDate BETWEEN ? AND ?`;
+    } else {
+      reimbursementWhere = `WHERE 1=1`;
+    }
+    const reimbursementSql = `
+      SELECT
+        e.category AS category,
+        SUM(i.amountCents) AS reimbursementCents
+      FROM transactions e
+      INNER JOIN transactions i ON e.reimbursementGroupId = i.reimbursementGroupId
+        AND e.reimbursementRole = 'payer'
+        AND i.reimbursementRole = 'receiver'
+      ${reimbursementWhere}
+        AND e.isReimbursement = 1
+        AND i.isReimbursement = 1
+      GROUP BY e.category
+    `;
+    const reimbursementRows = db.prepare(reimbursementSql).all(...(hasMonth ? params : [])) as Array<{ category: string; reimbursementCents: number | null }>;
+    const reimbursementMap = new Map<string, number>();
+    for (const row of reimbursementRows) {
+      const category = (row.category ?? '').trim();
+      reimbursementMap.set(category, Math.trunc(row.reimbursementCents ?? 0));
+    }
+    
     const data = (rows ?? []).map(r => {
       const rawId = (r.category ?? '').trim();
       const categoryId: CategoryId = isValidCategory(rawId) ? rawId : 'other_review';
       const spend = Math.abs(r.spendCents ?? 0);
       const income = Math.trunc(r.incomeCents ?? 0);
-      const amountCents = categoryId.startsWith('income_') ? income : Math.trunc(spend);
-      return { category: categoryId, amountCents };
+      const rawExpenseCents = categoryId.startsWith('income_') ? income : Math.trunc(spend);
+      const reimbursementsInCents = reimbursementMap.get(rawId) ?? 0;
+      const netExpenseCents = Math.max(0, rawExpenseCents - reimbursementsInCents);
+      
+      return {
+        category: categoryId,
+        rawExpenseCents,
+        netExpenseCents,
+        reimbursementsInCents,
+      };
     });
     res.json({ data });
   } catch {
@@ -112,10 +207,16 @@ summary.get('/monthly-6', (req, res) => {
              COALESCE((
                SELECT SUM(amountCents) FROM transactions
                WHERE amountCents > 0 AND strftime('%Y-%m', bookingDate) = m.ym
+                 AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)
+                 AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+                 AND (isPassThrough = 0 OR isPassThrough IS NULL)
              ),0) AS inc,
              ABS(COALESCE((
                SELECT SUM(amountCents) FROM transactions
                WHERE amountCents < 0 AND strftime('%Y-%m', bookingDate) = m.ym
+                 AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)
+                 AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+                 AND (isPassThrough = 0 OR isPassThrough IS NULL)
              ),0)) AS exp
       FROM months m
       ORDER BY m.ym
@@ -144,10 +245,14 @@ summary.get('/monthly', (req, res) => {
              COALESCE((
                SELECT SUM(amountCents) FROM transactions
                WHERE amountCents > 0 AND strftime('%Y-%m', bookingDate) = m.ym
+                 AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)
+                 AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
              ),0) AS inc,
              ABS(COALESCE((
                SELECT SUM(amountCents) FROM transactions
                WHERE amountCents < 0 AND strftime('%Y-%m', bookingDate) = m.ym
+                 AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)
+                 AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
              ),0)) AS exp
       FROM months m
       ORDER BY m.ym
@@ -156,6 +261,86 @@ summary.get('/monthly', (req, res) => {
     res.json({ data });
   } catch {
     res.json({ data: [] });
+  }
+});
+
+// GET /api/summary/internal-transfers -> Internal transfers summary
+summary.get('/internal-transfers', (req, res) => {
+  try {
+    const db = (req.app as any).locals.db;
+    const monthParam = (req.query as any)?.month as string | undefined;
+    const latest = monthParam || getLatestYm(req);
+    
+    if (!latest) {
+      return res.json({
+        period: { from: null, to: null },
+        totals: {
+          savingsOutCents: 0,
+          savingsInCents: 0,
+          walletOutCents: 0,
+          walletInCents: 0,
+          otherOutCents: 0,
+          otherInCents: 0,
+        },
+      });
+    }
+    
+    const { start, end } = getMonthRange(latest);
+    
+    // Query internal transfers grouped by kind and direction
+    const rows = db.prepare(`
+      SELECT
+        internalTransferKind AS kind,
+        internalTransferDirection AS direction,
+        SUM(ABS(amountCents)) AS totalCents
+      FROM transactions
+      WHERE isInternalTransfer = 1
+        AND bookingDate BETWEEN ? AND ?
+      GROUP BY internalTransferKind, internalTransferDirection
+    `).all(start, end) as Array<{ kind: string | null; direction: string | null; totalCents: number | null }>;
+    
+    const totals = {
+      savingsOutCents: 0,
+      savingsInCents: 0,
+      walletOutCents: 0,
+      walletInCents: 0,
+      otherOutCents: 0,
+      otherInCents: 0,
+    };
+    
+    for (const row of rows) {
+      const kind = row.kind || 'other';
+      const direction = row.direction || 'out';
+      const cents = Math.trunc(row.totalCents ?? 0);
+      
+      if (kind === 'savings') {
+        if (direction === 'out') totals.savingsOutCents += cents;
+        else totals.savingsInCents += cents;
+      } else if (kind === 'wallet') {
+        if (direction === 'out') totals.walletOutCents += cents;
+        else totals.walletInCents += cents;
+      } else {
+        if (direction === 'out') totals.otherOutCents += cents;
+        else totals.otherInCents += cents;
+      }
+    }
+    
+    res.json({
+      period: { from: start, to: end },
+      totals,
+    });
+  } catch (e) {
+    res.json({
+      period: { from: null, to: null },
+      totals: {
+        savingsOutCents: 0,
+        savingsInCents: 0,
+        walletOutCents: 0,
+        walletInCents: 0,
+        otherOutCents: 0,
+        otherInCents: 0,
+      },
+    });
   }
 });
 

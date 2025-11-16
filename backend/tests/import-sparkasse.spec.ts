@@ -25,7 +25,7 @@ describe('sparkasse_de parse', () => {
     const buffer = readFixtureBuffer('sparkasse_min.csv');
     const res = parseSparkasseDe(buffer);
 
-    expect(res.profileId).toBe('sparkasse_de');
+    expect(res.profileId).toBe('sparkasse');
     expect(res.confidence).toBe(1);
     expect(res.rows.length).toBeGreaterThanOrEqual(2);
 
@@ -55,9 +55,13 @@ describe('parseBankCsv integration (sparkasse)', () => {
     const direct: ParseResult = parseSparkasseDe(buffer);
     const fromBank: ParseResult = await parseBankCsv(buffer);
 
-    expect(fromBank.profileId).toBe('sparkasse_de');
+    expect(fromBank.profileId).toBe('sparkasse');
     expect(fromBank.rows).toEqual(direct.rows);
-    expect(fromBank.candidates).toEqual(direct.candidates);
+    // parseBankCsv returns all candidates from all profiles, not just the winner
+    // So we check that Sparkasse is the first (highest confidence) candidate
+    expect(fromBank.candidates.length).toBeGreaterThan(0);
+    expect(fromBank.candidates[0].profileId).toBe('sparkasse');
+    expect(fromBank.candidates[0].confidence).toBe(1);
     expect(fromBank.warnings).toEqual(direct.warnings);
     expect(fromBank.openingBalance).toBe(direct.openingBalance);
     expect(fromBank.closingBalance).toBe(direct.closingBalance);

@@ -34,6 +34,21 @@ export interface NormalizedTransaction {
   transferLinkId?: string | null;
   confidence?: number | null;
   metadata?: Record<string, string | number | boolean | null>;
+  isRefund?: boolean;
+  isRefunded?: boolean;
+  refundGroupId?: string | null;
+  internalTransferDirection?: 'out' | 'in' | null;
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | null;
+  internalTransferGroupId?: string | null;
+  isReimbursement?: boolean;
+  reimbursementRole?: 'payer' | 'receiver' | null;
+  reimbursementGroupId?: string | null;
+  reimbursementShareRatio?: number | null;
+  bankReferenceId?: string | null;
+  categorizationReasonCode?: string;
+  categorizationReasonText?: string;
+  isPassThrough?: boolean;
+  passThroughGroupId?: string | null;
 }
 
 

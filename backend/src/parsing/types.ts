@@ -12,19 +12,34 @@ export interface ParsedRow {
   counterpartyIban?: string | null;
   mcc?: string | null;
   reference?: string | null;
+  externalId?: string | null;
   rawText: string;
   normalizedText?: string;
   categorySystem?: 'nimbus-v1';
   category?: string;
   categoryConfidence?: number;
-  categorySource?: 'rule' | 'ml' | 'user' | 'fallback' | 'ai' | 'unknown';
+  categorySource?: 'rule' | 'ml' | 'user' | 'fallback' | 'ai' | 'unknown' | 'merchant-db-fuzzy' | 'heuristic:recurring' | 'heuristic:salary' | 'heuristic:rent' | 'heuristic:housing' | 'heuristic:uber-subscription';
   raw: Record<string, unknown>;
+  isRefund?: boolean;
+  isRefunded?: boolean;
+  refundGroupId?: string | null;
+  isInternalTransfer?: boolean;
+  internalTransferDirection?: 'out' | 'in' | null;
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | null;
+  internalTransferGroupId?: string | null;
+  isReimbursement?: boolean;
+  reimbursementRole?: 'payer' | 'receiver' | null;
+  reimbursementGroupId?: string | null;
+  reimbursementShareRatio?: number | null;
+  bankReferenceId?: string | null;
 }
 
 export interface ParseCandidate {
   profileId: string;
   confidence: number;
 }
+
+export type DetectionCandidate = ParseCandidate;
 
 export interface ParseResult {
   profileId: string;

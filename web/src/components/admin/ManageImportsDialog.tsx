@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from '../../lib/toast';
+import { emitDataMutated } from '../../lib/dataEvents';
 import { useImportHistory } from '../../hooks/useImportHistory';
 
 const DATE_TIME_FORMAT = new Intl.DateTimeFormat('de-DE', {
@@ -77,6 +78,7 @@ export function ManageImportsDialog({ open, onClose, onDeleted }: ManageImportsD
       toast('Ausgewählte Importe wurden gelöscht.', 'success');
       await refetch();
       setSelected([]);
+      emitDataMutated({ reason: 'imports:deleted' });
       const next = onDeleted?.();
       if (next instanceof Promise) {
         await next;

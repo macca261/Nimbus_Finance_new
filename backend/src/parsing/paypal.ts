@@ -12,7 +12,8 @@ export class PayPalParseError extends Error {
   }
 }
 
-const REQUIRED_HEADER_TOKENS = [
+// German PayPal export headers
+const REQUIRED_HEADER_TOKENS_DE = [
   'datum',
   'uhrzeit',
   'zeitzone',
@@ -27,7 +28,27 @@ const REQUIRED_HEADER_TOKENS = [
   'auswirkungaufguthaben',
 ];
 
-const ASCII_HEADER_TOKENS = REQUIRED_HEADER_TOKENS.map(token =>
+// English PayPal export headers (flexible matching - some may have spaces)
+const REQUIRED_HEADER_TOKENS_EN = [
+  'date',
+  'time',
+  'timezone', // "Time zone" normalizes to "timezone"
+  'name',
+  'type',
+  'status',
+  'currency',
+  'gross',
+  'fee',
+  'net',
+  'transactionid', // "Transaction ID" normalizes to "transactionid"
+  'balance',
+];
+
+const ASCII_HEADER_TOKENS_DE = REQUIRED_HEADER_TOKENS_DE.map(token =>
+  token.normalize('NFKD').replace(/[\u0300-\u036f]/g, ''),
+);
+
+const ASCII_HEADER_TOKENS_EN = REQUIRED_HEADER_TOKENS_EN.map(token =>
   token.normalize('NFKD').replace(/[\u0300-\u036f]/g, ''),
 );
 
@@ -87,14 +108,32 @@ export function isPayPalCsvText(input: Buffer | string): boolean {
   for (let i = 0; i < maxScan; i += 1) {
     const norm = normalizeHeaderLine(lines[i]);
     const asciiNorm = norm.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
-    if (!norm.includes('datum') || !norm.includes('status') || !norm.includes('transaktionscode')) {
-      continue;
+    
+    // Check for German PayPal headers
+    const hasGermanKeyFields = norm.includes('datum') && norm.includes('status') && norm.includes('transaktionscode');
+    if (hasGermanKeyFields) {
+      const allPresentDE = REQUIRED_HEADER_TOKENS_DE.every((token, idx) => {
+        const asciiToken = ASCII_HEADER_TOKENS_DE[idx];
+        return norm.includes(token) || asciiNorm.includes(asciiToken);
+      });
+      if (allPresentDE) return true;
     }
-    const allPresent = REQUIRED_HEADER_TOKENS.every((token, idx) => {
-      const asciiToken = ASCII_HEADER_TOKENS[idx];
-      return norm.includes(token) || asciiNorm.includes(asciiToken);
-    });
-    if (allPresent) return true;
+    
+    // Check for English PayPal headers (more flexible - require key fields + most others)
+    const hasEnglishKeyFields = (norm.includes('date') || asciiNorm.includes('date')) && 
+                                 (norm.includes('status') || asciiNorm.includes('status')) && 
+                                 (norm.includes('transactionid') || asciiNorm.includes('transactionid'));
+    if (hasEnglishKeyFields) {
+      // Count how many required tokens are present (allow some flexibility)
+      const presentCount = REQUIRED_HEADER_TOKENS_EN.filter((token, idx) => {
+        const asciiToken = ASCII_HEADER_TOKENS_EN[idx];
+        return norm.includes(token) || asciiNorm.includes(asciiToken) ||
+               norm.includes(token.replace('id', ' id')) || // "Transaction ID" -> "transaction id"
+               norm.includes(token.replace('zone', ' zone')); // "timezone" -> "time zone"
+      }).length;
+      // Require at least 10 out of 12 tokens (allowing for minor variations)
+      if (presentCount >= 10) return true;
+    }
   }
 
   return false;
@@ -162,9 +201,17 @@ function parsePayPalRecords(text: string): Record<string, string>[] {
       const primary = attemptParse(normalized, delimiter);
       if (primary.length) {
         const headerKeys = Object.keys(primary[0]).map(k => normalizeKey(k));
-        const hasDatum = headerKeys.some(k => k.includes('datum'));
-        const hasTx = headerKeys.some(k => k.includes('transaktionscode'));
-        if (hasDatum && hasTx && headerKeys.length >= REQUIRED_HEADER_TOKENS.length) {
+        // Check for German headers
+        const hasDatumDE = headerKeys.some(k => k.includes('datum'));
+        const hasTxDE = headerKeys.some(k => k.includes('transaktionscode'));
+        // Check for English headers
+        const hasDateEN = headerKeys.some(k => k.includes('date'));
+        const hasTxEN = headerKeys.some(k => k.includes('transactionid') || k.includes('transaction id'));
+        
+        const isGerman = hasDatumDE && hasTxDE && headerKeys.length >= 10; // At least 10 columns for German
+        const isEnglish = hasDateEN && hasTxEN && headerKeys.length >= 10; // At least 10 columns for English
+        
+        if (isGerman || isEnglish) {
           return primary;
         }
       }
@@ -179,9 +226,14 @@ function parsePayPalRecords(text: string): Record<string, string>[] {
       if (!fallback.length) return null;
 
       const headerKeys = Object.keys(fallback[0]).map(k => normalizeKey(k));
-      const hasDatum = headerKeys.some(k => k.includes('datum'));
-      const hasTx = headerKeys.some(k => k.includes('transaktionscode'));
-      if (!hasDatum || !hasTx) return null;
+      // Check for German headers
+      const hasDatumDE = headerKeys.some(k => k.includes('datum'));
+      const hasTxDE = headerKeys.some(k => k.includes('transaktionscode'));
+      // Check for English headers
+      const hasDateEN = headerKeys.some(k => k.includes('date'));
+      const hasTxEN = headerKeys.some(k => k.includes('transactionid') || k.includes('transaction id'));
+      
+      if (!((hasDatumDE && hasTxDE) || (hasDateEN && hasTxEN))) return null;
 
       return fallback;
     } catch {
@@ -295,7 +347,7 @@ function mapPayPalRecord(record: Record<string, string>, index: number): ParsedR
   if (amountCents === 0) return null;
 
   const externalId =
-    cleanId(getField(record, ['Transaktionscode', 'Transaktionscode ', 'Transaktions-ID', 'Transaction ID'])) ||
+    cleanId(getField(record, ['Transaktionscode', 'Transaktionscode ', 'Transaktions-ID', 'Transaction ID', 'TransactionID'])) ||
     undefined;
   if (!externalId) return null;
 
@@ -345,6 +397,7 @@ function mapPayPalRecord(record: Record<string, string>, index: number): ParsedR
     counterpartyIban: null,
     mcc: null,
     reference: relatedExternalId || null,
+    externalId,
     rawText,
     raw,
   };

@@ -61,6 +61,7 @@ export function persistTransactions(input: {
       isTransfer: tx.isTransfer ?? false,
       transferLinkId: tx.transferLinkId ?? null,
       confidence: tx.categoryConfidence,
+      bankReferenceId: tx.bankReferenceId ?? null,
     });
   }
 

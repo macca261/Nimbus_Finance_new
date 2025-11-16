@@ -14,9 +14,9 @@ export const RecentActivityMini: React.FC<RecentActivityMiniProps> = ({ transact
   const items = React.useMemo(() => transactions.slice(0, 5), [transactions]);
 
   return (
-    <section className="rounded-2xl border border-slate-200/80 bg-white px-5 py-5 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Neueste Aktivitäten</h2>
+    <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <h3 className="text-base font-medium text-slate-900 dark:text-slate-100 md:text-lg">Neueste Aktivitäten</h3>
         <Link
           to="/transactions"
           className="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-300 dark:hover:text-indigo-200"

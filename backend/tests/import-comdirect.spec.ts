@@ -1,69 +1,71 @@
-import { describe, it, expect, beforeEach } from 'vitest'
-import request from 'supertest'
-import fs from 'node:fs'
-import path from 'node:path'
-import { makeTestApp, resetDb, fixturePath } from './helpers/test-utils'
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, it, expect } from 'vitest';
+import type { ParseResult } from '../src/parsing/types';
+import { parseBankCsv } from '../src/parser/parseBankCsv';
+import * as comdirect from '../src/parsing/profiles/comdirect_de';
 
-let app: any; let db: any;
-beforeEach(() => { const made = makeTestApp(); app = made.app; db = made.db; resetDb(db); })
+const fx = (...p: string[]) => path.join(__dirname, 'fixtures', ...p);
 
-function exists(p: string) { try { fs.accessSync(p); return true; } catch { return false; } }
-function loadFixtureBuffer(rel: string, inlineFallback: string): Buffer {
-  const p = fixturePath(rel)
-  if (exists(p)) return fs.readFileSync(p)
-  return Buffer.from(inlineFallback, 'utf8')
-}
+describe('comdirect CSV detection', () => {
+  it('detects comdirect header with metadata rows', () => {
+    const text = fs.readFileSync(fx('comdirect_example.csv'), 'utf8');
+    const d = comdirect.detect(text);
+    expect(d.hit).toBe(true);
+    expect(d.confidence).toBe(1);
+  });
+});
 
-const INLINE_MIN = [
-  'Buchungstag;Wertstellung;Verwendungszweck;Betrag;Währung;IBAN;Gegenkonto;Kategorie;Code',
-  '01.03.2025;01.03.2025;GEHALT ACME GMBH;3.000,00;EUR;DE00123456780000000000;;;Gehalt',
-  '02.03.2025;02.03.2025;REWE MARKT 123 BERLIN;-31,24;EUR;DE00123456780000000000;;;Kartenzahlung',
-  '03.03.2025;03.03.2025;KARTENENTGELT MÄRZ;-9,90;EUR;DE00123456780000000000;;;Gebühr',
-].join('\n')
+describe('comdirect parse', () => {
+  it('parses rows into ParsedRow contracts', () => {
+    const buffer = fs.readFileSync(fx('comdirect_example.csv'));
+    const res = comdirect.parse(buffer);
+    expect(res.profileId).toBe('comdirect_de');
+    expect(res.confidence).toBe(1);
+    expect(res.rows.length).toBe(3);
 
-describe('Comdirect import', () => {
-  it('imports comdirect_min.csv', async () => {
-    const pre = await request(app).get('/api/summary/balance')
-    const preCents = (pre.body?.data || pre.body)?.balanceCents ?? 0
-    const buf = loadFixtureBuffer('comdirect_min.csv', INLINE_MIN)
-    const res = await request(app).post('/api/import').attach('file', buf, 'comdirect_min.csv')
-    expect(res.status).toBe(200)
-    expect(res.body?.ok).toBe(true)
-    expect(res.body?.transactionCount).toBeGreaterThan(0)
+    // Check first transaction (outgoing)
+    const out1 = res.rows.find(r => r.amountCents === -6699);
+    expect(out1?.bookingDate).toBe('2025-10-27');
+    expect(out1?.valutaDate).toBe('2025-10-27');
+    expect(out1?.amountCents).toBe(-6699);
+    expect(out1?.currency).toBe('EUR');
+    expect(out1?.accountId).toBe('comdirect:giro');
+    expect(out1?.direction).toBe('out');
+    expect((out1?.rawText ?? '').toLowerCase()).toContain('miete');
 
-    const bal = await request(app).get('/api/summary/balance')
-    const postCents = (bal.body?.data || bal.body)?.balanceCents ?? 0
-    expect(postCents - preCents).toBe(300000 - 3124 - 990)
+    // Check second transaction (outgoing)
+    const out2 = res.rows.find(r => r.amountCents === -1234);
+    expect(out2?.bookingDate).toBe('2025-10-27');
+    expect(out2?.amountCents).toBe(-1234);
+    expect((out2?.rawText ?? '').toLowerCase()).toContain('rewe');
 
-    const stats = await request(app).get('/api/debug/stats')
-    expect(stats.status).toBe(200)
-    const cnt = (stats.body?.data || stats.body)?.count ?? 0
-    expect(cnt).toBeGreaterThan(0)
+    // Check third transaction (incoming)
+    const income = res.rows.find(r => r.amountCents === 300000);
+    expect(income?.bookingDate).toBe('2025-03-01');
+    expect(income?.amountCents).toBe(300000);
+    expect(income?.direction).toBe('in');
+    expect((income?.rawText ?? '').toLowerCase()).toContain('gehalt');
+  });
 
-    const tx = await request(app).get('/api/transactions/recent?limit=5')
-    expect(tx.status).toBe(200)
-    const list = (tx.body?.transactions ?? tx.body?.data ?? []) as any[]
-    expect(Array.isArray(list)).toBe(true)
-    expect(list.length).toBeGreaterThan(0)
-    const purposes = list.map((t: any) => String(t.purpose || '')).join(' \n ')
-    expect(purposes).toMatch(/GEHALT ACME/i)
-    expect(purposes).toMatch(/REWE/i)
-    expect(purposes).toMatch(/KARTENENTGELT/i)
-    expect(list.some((t: any) => t.category === 'income_salary')).toBe(true)
-    expect(list.some((t: any) => t.category === 'groceries')).toBe(true)
-    expect(list.some((t: any) => t.category === 'fees_charges')).toBe(true)
-  })
+  it('is deterministic for identical input', () => {
+    const buffer = fs.readFileSync(fx('comdirect_example.csv'));
+    const a = comdirect.parse(buffer);
+    const b = comdirect.parse(buffer);
+    expect(a).toEqual(b);
+  });
+});
 
-  it('imports real file if present (smoke)', async () => {
-    const real = fixturePath('comdirect_real.csv')
-    if (!exists(real)) return
-    
-    const buf = fs.readFileSync(real)
-    const res = await request(app).post('/api/import').attach('file', buf, 'comdirect_real.csv')
-    expect(res.status).toBe(200)
-    expect(res.body?.ok).toBe(true)
-    expect(res.body?.transactionCount).toBeGreaterThan(0)
-  })
-})
-
-
+describe('parseBankCsv integration (comdirect)', () => {
+  it('delegates to comdirect_de when detection succeeds', async () => {
+    const buffer = fs.readFileSync(fx('comdirect_example.csv'));
+    const fromBank: ParseResult = await parseBankCsv(buffer);
+    const direct: ParseResult = comdirect.parse(buffer);
+    expect(fromBank.profileId).toBe('comdirect_de');
+    expect(fromBank.rows).toEqual(direct.rows);
+    expect(fromBank.candidates).toEqual(direct.candidates);
+    expect(fromBank.warnings).toEqual(direct.warnings);
+    expect(fromBank.openingBalance).toBe(direct.openingBalance);
+    expect(fromBank.closingBalance).toBe(direct.closingBalance);
+  });
+});

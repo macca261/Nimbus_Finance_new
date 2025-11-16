@@ -1,57 +1,29 @@
-import { AreaChart, Area, ResponsiveContainer, Tooltip, CartesianGrid, XAxis, YAxis } from 'recharts';
-import { formatCurrencyEUR } from '../../lib/format';
-import type { BalancePoint, DerivedDashboard } from '../../lib/derive';
+import React from 'react';
 
 type KpiCardProps = {
-  balanceSeries: BalancePoint[];
-  totals: DerivedDashboard['totals'];
+  label: string;
+  value: string;
+  hint?: string;
+  isNegative?: boolean;
+  loading?: boolean;
 };
 
-export default function KpiCard({ balanceSeries, totals }: KpiCardProps) {
-  if (!balanceSeries.length) {
-    return (
-      <div className="rounded-2xl bg-white p-5 text-sm text-neutral-500 shadow-soft border border-dashed border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900">
-        Noch keine Daten – lade eine CSV hoch, um KPIs zu sehen.
-      </div>
-    );
-  }
-
-  const value = balanceSeries.at(-1)!.value;
-  const prev = balanceSeries.length > 1 ? balanceSeries.at(-2)!.value : 0;
-  const diff = value - prev;
-  const pct = prev !== 0 ? (diff / prev) * 100 : diff === 0 ? 0 : 100;
+export const KpiCard: React.FC<KpiCardProps> = ({ label, value, hint, isNegative, loading }) => {
+  const valueColor = isNegative
+    ? 'text-red-600 dark:text-red-400'
+    : 'text-slate-900 dark:text-slate-100';
 
   return (
-    <div className="bg-white dark:bg-neutral-900 rounded-2xl p-5 shadow-soft border dark:border-neutral-800">
-      <div className="flex items-end justify-between">
-        <div>
-          <div className="text-neutral-500 dark:text-neutral-400 text-sm">Gesamtsaldo</div>
-          <div className="text-3xl font-semibold">{formatCurrencyEUR(value)}</div>
-          <div className={`text-sm mt-1 ${diff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-            {diff >= 0 ? '▲' : '▼'} {formatCurrencyEUR(Math.abs(diff))} ({pct.toFixed(1)}%)
-          </div>
-          <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-            Monatlicher Nettozufluss: {formatCurrencyEUR(totals.latestMonthNet ?? 0)}
-          </div>
-        </div>
-        <div className="w-64 h-24">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={balanceSeries}>
-              <defs>
-                <linearGradient id="bal" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#5B8DEF" stopOpacity={0.4} />
-                  <stop offset="100%" stopColor="#5B8DEF" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.2} />
-              <XAxis dataKey="month" hide />
-              <YAxis hide />
-              <Tooltip formatter={(value: number) => formatCurrencyEUR(value)} />
-              <Area dataKey="value" type="monotone" stroke="#5B8DEF" fill="url(#bal)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-6">
+      <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        {label}
       </div>
+      <div className={`text-2xl font-semibold tabular-nums md:text-3xl ${valueColor}`}>
+        {loading ? '—' : value}
+      </div>
+      {hint && (
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{hint}</p>
+      )}
     </div>
   );
-}
+};

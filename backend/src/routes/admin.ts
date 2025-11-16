@@ -1,6 +1,5 @@
 import { Router } from 'express';
-import { db } from '../db';
-import { deleteImportsByIds, listImports } from '../services/imports';
+import { db, backfillInternalTransferCategories } from '../db';
 
 const DEFAULT_TABLES = [
   'transactions',
@@ -54,45 +53,19 @@ adminRouter.post('/admin/reset', async (req, res) => {
   }
 });
 
-adminRouter.get('/admin/imports', (req, res) => {
-  const conn = ((req.app as any)?.locals?.db ?? db);
-  const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
-  const limitParsed = Number.parseInt(typeof limitRaw === 'string' ? limitRaw : '', 10);
-  const limit = Number.isFinite(limitParsed) && limitParsed > 0 ? Math.min(limitParsed, 100) : 50;
-  const imports = listImports(limit, conn);
-  return res.json({ imports });
-});
-
-adminRouter.delete('/admin/imports', (req, res) => {
-  const conn = ((req.app as any)?.locals?.db ?? db);
-  const body = req.body as { ids?: Array<number | string> } | undefined;
-  const ids = Array.isArray(body?.ids) ? body?.ids : null;
-  if (!ids?.length) {
-    return res.status(400).json({
-      ok: false,
-      code: 'BAD_REQUEST',
-      message: 'ids array required',
-    });
-  }
-
-  try {
-    const result = deleteImportsByIds(ids, conn);
-    return res.json({
-      ok: true,
-      ...result,
-    });
-  } catch (error) {
-    console.error('Failed to delete imports', error);
-    return res.status(500).json({
-      ok: false,
-      code: 'ADMIN_IMPORT_DELETE_FAILED',
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-});
-
 export function mountAdminRoutes(router: Router): void {
   router.use('/api', adminRouter);
+
+  // POST /api/admin/backfill/internal-transfers
+  adminRouter.post('/admin/backfill/internal-transfers', (req, res) => {
+    try {
+      const conn = ((req.app as any)?.locals?.db ?? db);
+      const updated = backfillInternalTransferCategories(conn);
+      return res.json({ ok: true, updatedCount: updated });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: e?.message || 'backfill failed' });
+    }
+  });
 }
 
 

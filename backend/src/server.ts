@@ -15,7 +15,10 @@ import { transactionsRouter } from './routes/transactions';
 import dashboardRouter from './routes/dashboard';
 import devResetRouter from './routes/dev-reset';
 import { mountAdminRoutes } from './routes/admin';
+import adminImportsRouter from './routes/admin-imports';
 import normalizerRouter from './routes/normalizer';
+import { mountReviewRoutes } from './routes/review';
+import { mountCategoryRoutes } from './routes/categories';
 import os from 'node:os';
 import fs from 'node:fs';
 import { decodeCsvBuffer } from './lib/text';
@@ -172,8 +175,16 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   app.use('/api/paypal', paypalRouter);
   app.use('/api/overrides', overridesRouter);
   app.use('/api/transactions', transactionsRouter);
+  // Accounts router
+  const { accountsRouter } = require('./routes/accounts');
+  app.use('/api/accounts', accountsRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/normalizer', normalizerRouter);
+  app.use('/api/admin/imports', adminImportsRouter);
+  mountReviewRoutes(app);
+  console.log('Mounted: /api/review/transactions');
+  mountCategoryRoutes(app);
+  console.log('Mounted: /api/categories');
   mountAdminRoutes(app);
   if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
     app.use('/api', devResetRouter);

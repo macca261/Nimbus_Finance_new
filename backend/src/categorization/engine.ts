@@ -1,7 +1,35 @@
 import type { ParsedRow } from '../parser/types';
 import { normalizeText } from './normalize';
-import { SYSTEM_RULES, applyRules as applyBasicRules } from './rules';
+// Import from rulesRuntime to avoid circular dependencies
+// rulesRuntime.ts has no imports from engine.ts, index.ts, or orchestrator.ts
+import { SYSTEM_RULES, applyRules, applyRulesForRow, applyBasicRules, isUberSubscriptionLike, type ApplyRulesResult } from './rulesRuntime';
 import { SYSTEM_MERCHANT_PATTERNS } from './merchantPatterns';
+import { fuzzyMatchMerchant } from '../categorizers/fuzzyMatcher';
+import { extractUnderlyingMerchantFromPayPal } from './textPreprocessor';
+
+// Startup assertion: verify functions are available and throw if not
+// This prevents silent failures where everything gets categorized as "Sonstiges"
+if (!process.env.CATEGORIZATION_ENGINE_ASSERTED) {
+  const typeApplyRulesForRow = typeof applyRulesForRow;
+  const typeApplyBasicRules = typeof applyBasicRules;
+
+  console.log(
+    '[categorization] startup check:',
+    'typeof applyRulesForRow =',
+    typeApplyRulesForRow,
+    ', typeof applyBasicRules =',
+    typeApplyBasicRules,
+  );
+
+  if (typeApplyRulesForRow !== 'function' || typeApplyBasicRules !== 'function') {
+    throw new Error(
+      '[categorization] FATAL: applyRulesForRow/applyBasicRules are not functions. ' +
+      'Check rules module imports and JSON/TS name collisions.'
+    );
+  }
+
+  process.env.CATEGORIZATION_ENGINE_ASSERTED = 'true';
+}
 import type {
   CategorizedTransaction,
   CategoryRule,
@@ -11,6 +39,9 @@ import { normalizeMerchant } from './merchants';
 import { getOverrideSync } from './overrides';
 import { txFingerprint } from '../db';
 import { normalize as runNormalizer } from '../normalizer/engine';
+import { buildRuleTextContext } from './textPreprocessor';
+import { applyHeuristics, detectRecurringPattern, detectSalary, detectRentOrHousing, type HeuristicMatch } from './heuristics';
+import { detectTransfer, type TransferMatch } from './transferDetection';
 
 const SEPA_METADATA_REGEX = /\b(?:SVWZ|EREF|MREF|KREF|CRED|IBAN|BIC)\+[^ ]*/gi;
 const LONG_ID_REGEX = /\b(?=[0-9A-Z]*\d)[0-9A-Z]{10,}\b/g;
@@ -35,9 +66,101 @@ const normalizeForMatch = (input: string): string => {
 const sanitizeForFuzzy = (input: string): string => input.replace(/[^A-Z0-9]/g, '');
 
 export interface EngineContext {
-  systemRules: CategoryRule[];
-  merchantPatterns: MerchantPattern[];
+  systemRules?: CategoryRule[];
+  merchantPatterns?: MerchantPattern[];
   userRules?: CategoryRule[];
+  history?: ParsedRow[]; // Optional transaction history for recurring pattern detection
+}
+
+/**
+ * Categorization context for passing rules and patterns to the engine.
+ * This is a hook point for future DB-backed user rules & merchant patterns.
+ */
+export interface CategorizationContext {
+  systemRules?: CategoryRule[];
+  userRules?: CategoryRule[];
+  merchantPatterns?: MerchantPattern[];
+  history?: ParsedRow[]; // Optional transaction history for recurring pattern detection
+}
+
+// ====================================================================================
+// Transaction kind inference and category family guards
+// ====================================================================================
+
+export type TxKind =
+  | 'income'
+  | 'income_salary'
+  | 'expense'
+  | 'transfer_internal'
+  | 'refund'
+  | 'reimbursement'
+  | 'unknown';
+
+function inferTxKind(row: ParsedRow): TxKind {
+  // Flags first
+  if ((row as any).isRefund || (row as any).isRefunded) return 'refund';
+  if ((row as any).isInternalTransfer) return 'transfer_internal';
+  if ((row as any).isReimbursement) return 'reimbursement';
+
+  const text = `${row.counterparty ?? ''} ${row.rawText ?? ''}`.toUpperCase();
+  if (row.amountCents > 0) {
+    if (
+      text.includes('GEHALT') ||
+      text.includes('LOHN') ||
+      text.includes('SALARY') ||
+      text.includes('PAYROLL')
+    ) {
+      return 'income_salary';
+    }
+    return 'income';
+  }
+  if (row.amountCents < 0) return 'expense';
+  return 'unknown';
+}
+
+type CategoryFamily = 'income' | 'expense' | 'transfer' | 'other';
+
+function getCategoryFamily(category: string): CategoryFamily {
+  if (!category) return 'other';
+  if (category.startsWith('income')) return 'income';
+  if (category.startsWith('internal')) return 'transfer';
+  if (category === 'other' || category.startsWith('other')) return 'other';
+  return 'expense';
+}
+
+function applySignCategoryGuards(
+  txKind: TxKind,
+  row: ParsedRow,
+  categorized: CategorizedTransaction,
+): CategorizedTransaction {
+  const family = getCategoryFamily(categorized.category as any);
+  // Income amount but expense category
+  if ((row.direction === 'in' || row.amountCents > 0) && family === 'expense') {
+    const patched: CategorizedTransaction = { ...categorized };
+    patched.category = (txKind === 'income_salary' ? 'income:salary' : 'income:freelance') as any;
+    patched.categorySource = 'sanity_guard' as any;
+    patched.categoryConfidence = Math.min(patched.categoryConfidence ?? 0.4, 0.4);
+    if (patched.categoryExplanation) {
+      patched.categoryExplanation.ruleId = 'sign_guard_income_expense_mismatch';
+    } else {
+      (patched as any).categoryExplanation = { ruleId: 'sign_guard_income_expense_mismatch' };
+    }
+    return patched;
+  }
+  // Expense amount but income category
+  if ((row.direction === 'out' || row.amountCents < 0) && family === 'income') {
+    const patched: CategorizedTransaction = { ...categorized };
+    patched.category = 'other' as any;
+    patched.categorySource = 'sanity_guard' as any;
+    patched.categoryConfidence = Math.min(patched.categoryConfidence ?? 0.4, 0.4);
+    if (patched.categoryExplanation) {
+      patched.categoryExplanation.ruleId = 'sign_guard_expense_income_mismatch';
+    } else {
+      (patched as any).categoryExplanation = { ruleId: 'sign_guard_expense_income_mismatch' };
+    }
+    return patched;
+  }
+  return categorized;
 }
 
 type RuleMatch = {
@@ -101,6 +224,7 @@ const detectMerchant = (
   patterns: MerchantPattern[],
 ): MerchantMatch | null => {
   const normalizedCompact = sanitizeForFuzzy(normalized);
+  const normalizedUpper = normalized.toUpperCase();
 
   let best: MerchantMatch | null = null;
 
@@ -118,6 +242,14 @@ const detectMerchant = (
         : false;
 
     if (!hasExact && !hasFuzzy) continue;
+
+    // Special handling for Uber patterns: exclude subscription keywords
+    // This prevents "UBER PASS Membership" from matching "UBER TRIP" pattern
+    if (pattern.id === 'uber' && pattern.category === 'transport:rideshare') {
+      if (isUberSubscriptionLike(normalizedUpper)) {
+        continue; // Skip this pattern match - subscription will be handled by heuristic
+      }
+    }
 
     if (!best || pattern.score > best.score) {
       best = {
@@ -234,13 +366,42 @@ const scoreToConfidence = (score: number): number => {
   return Math.min(0.7, Math.max(0.4, score / 200));
 };
 
+function adjustConfidenceForSignMismatch(row: ParsedRow, category: string, confidence: number): number {
+  // Simple top-level group detection by prefix
+  const isIncomeCategory = category.startsWith('income');
+  const isExpenseCategory = !isIncomeCategory && !category.startsWith('internal');
+  // Income amount is positive (direction 'in'), expenses are negative (direction 'out')
+  const isIncomeAmount = row.direction === 'in' || row.amountCents > 0;
+  const isExpenseAmount = row.direction === 'out' || row.amountCents < 0;
+
+  // If sign/group mismatch, clamp confidence to low (<= 0.4)
+  if (isIncomeAmount && isExpenseCategory) {
+    return Math.min(confidence, 0.4);
+  }
+  if (isExpenseAmount && isIncomeCategory) {
+    return Math.min(confidence, 0.4);
+  }
+  return confidence;
+}
+
+/**
+ * 6-Stage Categorization Pipeline
+ * 
+ * Stage 1: Per-transaction override (manual category set in UI)
+ * Stage 2: User rules ("immer so kategorisieren")
+ * Stage 3: System rules / merchant dictionaries
+ * Stage 4: Heuristics (direction, keywords, periodicity)
+ * Stage 5: Transfer / internal movement detection
+ * Stage 6: Final fallback
+ */
 export function categorizeWithRules(
   row: ParsedRow,
-  ctx: EngineContext = {
+  ctx: EngineContext | CategorizationContext = {
     systemRules: SYSTEM_RULES,
     merchantPatterns: SYSTEM_MERCHANT_PATTERNS,
   },
 ): CategorizedTransaction {
+  const txKind = inferTxKind(row);
   const normalizedDescription = normalizeDescription(row);
   const merchantInfo = normalizeMerchant(row.rawText ?? undefined, row.counterparty);
   const candidateParts = [
@@ -253,105 +414,427 @@ export function categorizeWithRules(
     text: candidateText,
     counterparty: row.counterparty ?? undefined,
   });
-  const basicRuleHit = applyBasicRules(merchantInfo.merchant, row.rawText ?? '');
   const normalizedText = row.normalizedText ?? normalizeText(row.rawText ?? '');
+  
+  // Build cleaned text context for better rule matching
+  const textContext = buildRuleTextContext(row);
+  const cleanedText = textContext.cleanedText;
+  
+  // Extract merchant name (prefer normalizer, then merchantInfo, then preprocessor hint)
+  let merchantName = normalizerResult.merchant ?? 
+                      merchantInfo.merchant ?? 
+                      row.counterparty ?? 
+                      textContext.merchantHint ?? 
+                      undefined;
+
+  // ============================================
+  // PAYPAL ENRICHMENT: Extract underlying merchant from PayPal transactions
+  // ============================================
+  // If the merchant is PayPal (or rawText contains PayPal), try to extract the underlying merchant
+  const merchantNameNormalized = (merchantName ?? '').toUpperCase().trim();
+  const isPayPalTransaction = merchantNameNormalized.includes('PAYPAL') || 
+                               (row.rawText?.toUpperCase().includes('PAYPAL') ?? false);
+  
+  if (isPayPalTransaction && row.rawText) {
+    const underlyingMerchant = extractUnderlyingMerchantFromPayPal(row.rawText);
+    if (underlyingMerchant && underlyingMerchant.trim().length >= 2) {
+      // Override merchantName with the extracted underlying merchant
+      // This allows rules and fuzzy matching to work on the actual merchant, not "PayPal"
+      merchantName = underlyingMerchant.trim();
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log(
+          '[categorization] PayPal enrichment',
+          {
+            original: normalizerResult.merchant ?? merchantInfo.merchant ?? row.counterparty,
+            extracted: underlyingMerchant,
+          },
+        );
+      }
+    }
+  }
+
+  // Prepare base categorized transaction
+  const baseCategorized: CategorizedTransaction = {
+    ...row,
+    normalizedText,
+    normalizedDescription,
+    merchant: merchantName,
+    categorySystem: 'nimbus-v1',
+  };
+
+  if (normalizerResult.matchedRuleId) {
+    const rawRecord = { ...(baseCategorized.raw ?? {}) };
+    rawRecord.normalizerMatchedRuleId = normalizerResult.matchedRuleId;
+    baseCategorized.raw = rawRecord;
+  }
+
+  if (normalizerResult.categoryHint && (row.category === undefined || row.category === null)) {
+    baseCategorized.categoryHint = normalizerResult.categoryHint;
+  }
+
+  // Hard override for internal transfers: always assign internal categories and stop
+  const applyInternalTransferOverride = (): CategorizedTransaction | null => {
+    if (!(row as any).isInternalTransfer) return null;
+    const kind = (row as any).internalTransferKind as ('savings' | 'wallet' | 'other' | null | undefined);
+    let categoryId = 'internal:transfer_other';
+    if (kind === 'savings') categoryId = 'internal:transfer_savings';
+    else if (kind === 'wallet') categoryId = 'internal:transfer_wallet';
+    return {
+      ...baseCategorized,
+      category: categoryId,
+      categorySource: 'system',
+      categoryRuleId: `internal_transfer:${kind ?? 'other'}`,
+      categoryConfidence: 0.9,
+    };
+  };
+  const internalOverride = applyInternalTransferOverride();
+  if (internalOverride) {
+    return internalOverride;
+  }
+
+  // ============================================
+  // STAGE 1: Per-transaction override (manual category set in UI)
+  // ============================================
   const overrideId = stableOverrideId(row);
   const override = overrideId ? getOverrideSync(overrideId) : null;
-
   if (override) {
     return {
-      ...row,
-      normalizedText,
-      normalizedDescription,
-      merchant: normalizerResult.merchant ?? merchantInfo.merchant ?? row.counterparty ?? undefined,
-      categorySystem: 'nimbus-v1',
+      ...baseCategorized,
       category: override.category as any,
       categorySource: 'user',
       categoryConfidence: 1,
     };
   }
 
-  const merchantMatch = detectMerchant(normalizedDescription, ctx.merchantPatterns);
-
-  const combinedRules = [...(ctx.userRules ?? []), ...ctx.systemRules];
-
-  const ruleMatches: RuleMatch[] = [];
-  for (const rule of combinedRules) {
-    if (!evaluateRule(rule, row, normalizedDescription, merchantMatch)) continue;
-    ruleMatches.push({
-      category: rule.setCategory,
-      score: rule.score,
-      source: rule.source === 'user' ? 'user' : 'rule',
-      ruleId: rule.id,
-    });
+  // ============================================
+  // STAGE 2: User rules ("immer so kategorisieren") - always allowed
+  // ============================================
+  if (ctx.userRules && ctx.userRules.length > 0) {
+    try {
+      const userRulesResult = applyRulesForRow(row, {
+        systemRules: [],
+        userRules: ctx.userRules,
+      });
+      if (userRulesResult.categoryId) {
+        return {
+          ...baseCategorized,
+          category: userRulesResult.categoryId,
+          categorySource: 'user',
+          categoryConfidence: 0.95,
+        };
+      }
+    } catch (err) {
+      console.warn('[categorization] user rules evaluation failed', err);
+    }
   }
 
-  if (basicRuleHit) {
-    ruleMatches.push({
-      category: basicRuleHit.category as any,
-      score: 210,
-      source: basicRuleHit.source,
-      ruleId: 'basic_rules:v1',
-    });
-  }
-
-  const best = selectBestMatch(ruleMatches, merchantMatch);
-
-  const defaultMerchant =
-    normalizerResult.merchant ??
-    merchantInfo.merchant ??
-    merchantMatch?.merchant ??
-    row.counterparty ??
-    undefined;
-
-  const categorized: CategorizedTransaction = {
-    ...row,
-    normalizedText,
-    normalizedDescription,
-    merchant: defaultMerchant,
+  // ============================================
+  // STAGE 3: System rules / merchant dictionaries
+  // Only for expense-like transactions. Skip for income kinds to avoid mislabels.
+  // ============================================
+  let systemRuleHit: { category: string; source: 'rule' | 'user'; ruleId?: string; confidence?: number; merchantName?: string; matchedText?: string } | null = null;
+  
+  const ruleCategoryAllowed = (txk: TxKind, cat: string): boolean => {
+    const fam = getCategoryFamily(cat);
+    if (txk === 'income' || txk === 'income_salary') {
+      return fam === 'income' || fam === 'transfer';
+    }
+    if (txk === 'expense') {
+      return fam === 'expense' || fam === 'transfer' || fam === 'other';
+    }
+    // For transfer/refund/reimbursement/unknown allow but guards will fix later
+    return true;
   };
 
-  if (normalizerResult.matchedRuleId) {
-    const rawRecord = { ...(categorized.raw ?? {}) };
-    rawRecord.normalizerMatchedRuleId = normalizerResult.matchedRuleId;
-    categorized.raw = rawRecord;
+  // Try simple applyRules API first (uses cleaned text)
+  if (typeof applyRules === 'function') {
+    try {
+      const hit = applyRules(merchantName, cleanedText || (row.rawText ?? ''));
+      if (hit) {
+        // Convert RuleHit to expected format, filtering out 'ml' source
+        if (hit.source === 'rule' || hit.source === 'user') {
+          if (ruleCategoryAllowed(txKind, hit.category)) {
+            systemRuleHit = {
+              category: hit.category,
+              source: hit.source,
+              ruleId: hit.ruleId,
+              confidence: hit.confidence,
+              merchantName: hit.merchantName,
+              matchedText: hit.matchedText,
+            };
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[categorization] applyRules failed, trying advanced engine', err);
+    }
   }
 
-  if (normalizerResult.categoryHint && (row.category === undefined || row.category === null)) {
-    categorized.categoryHint = normalizerResult.categoryHint;
+  // Fallback to advanced rule engine if simple API didn't match
+  if (!systemRuleHit) {
+    try {
+      const advancedResult = applyRulesForRow(row, {
+        systemRules: ctx.systemRules ?? SYSTEM_RULES,
+        userRules: ctx.userRules,
+      });
+      if (advancedResult.categoryId) {
+        if (ruleCategoryAllowed(txKind, advancedResult.categoryId)) {
+          systemRuleHit = {
+            category: advancedResult.categoryId,
+            source: 'rule',
+            confidence: advancedResult.confidence ?? 0.9,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn('[categorization] advanced rule engine failed', err);
+    }
   }
 
-  if (
-    normalizerResult.matchedRuleId &&
-    (process.env.NODE_ENV ?? '').toLowerCase() !== 'production'
-  ) {
-    const sourceId =
-      (categorized.raw && typeof categorized.raw.__source === 'string'
-        ? (categorized.raw.__source as string)
-        : null) ??
-      row.bankProfile ??
-      row.accountId ??
-      'unknown';
-    // eslint-disable-next-line no-console
-    console.debug(`[normalizer] matched rule ${normalizerResult.matchedRuleId} for ${sourceId}`);
+  // Also check legacy basic rules as fallback
+  if (!systemRuleHit) {
+    try {
+      const basicRuleHit = applyBasicRules(merchantInfo.merchant, row.rawText ?? '');
+      if (basicRuleHit) {
+        if (ruleCategoryAllowed(txKind, basicRuleHit.category)) {
+          systemRuleHit = {
+            category: basicRuleHit.category,
+            source: 'rule',
+            confidence: 0.85,
+          };
+        }
+      }
+    } catch (err) {
+      // Silently continue if basic rules fail
+    }
   }
 
-  if (best) {
-    return {
-      ...categorized,
-      categorySystem: 'nimbus-v1',
-      category: best.category,
-      categorySource: best.source,
-      categoryConfidence: scoreToConfidence(best.score),
+  if (systemRuleHit) {
+    let confidence = systemRuleHit.confidence ?? 
+                      (systemRuleHit.category === 'income:salary' ? 1.0 :
+                      systemRuleHit.category.startsWith('fees:') ? 0.95 :
+                      0.9);
+    confidence = adjustConfidenceForSignMismatch(row, systemRuleHit.category, confidence);
+    
+    const result: CategorizedTransaction = {
+      ...baseCategorized,
+      category: systemRuleHit.category,
+      categorySource: systemRuleHit.source,
+      categoryConfidence: confidence,
     };
+    
+    // Add explanation if available
+    if (systemRuleHit.ruleId) {
+      result.categoryExplanation = {
+        ruleId: systemRuleHit.ruleId,
+        merchantName: systemRuleHit.merchantName,
+        matchedText: systemRuleHit.matchedText,
+      };
+    }
+    
+    return applySignCategoryGuards(txKind, row, result);
   }
 
-  return {
-    ...categorized,
-    categorySystem: 'nimbus-v1',
+  // ============================================
+  // STAGE 3.5: Fuzzy merchant matching (merchant DB)
+  // ============================================
+  // Only run if no system rule matched
+  if (!systemRuleHit && merchantName) {
+    try {
+      // Normalize merchant name for fuzzy matching
+      // Use the merchant name we extracted, or fall back to counterparty/rawText
+      const merchantNameForFuzzy = merchantName || 
+                                   merchantInfo.merchant || 
+                                   row.counterparty || 
+                                   '';
+      
+      if (merchantNameForFuzzy && merchantNameForFuzzy.trim().length >= 3) {
+        const fuzzy = fuzzyMatchMerchant(merchantNameForFuzzy, {
+          minScore: 0.80, // Use DEFAULT_MIN_SCORE from fuzzyMatcher
+          maxCandidates: 3,
+        });
+        
+        if (fuzzy && fuzzy.score >= 0.80) {
+          // Map category using the same logic as system rules
+          // We need to import mapNimbusCategoryToLegacy, but it's in index.ts
+          // For now, use the category directly (it should already be a valid nimbus category)
+          const mappedCategory = fuzzy.category; // Will be mapped later in index.ts
+          if (!ruleCategoryAllowed(txKind, mappedCategory)) {
+            // Skip fuzzy suggestion that violates category family
+            return {
+              ...baseCategorized,
+              category: 'other',
+              categorySource: 'unknown',
+              categoryConfidence: 0.1,
+            };
+          }
+          
+          if (process.env.NODE_ENV === 'development') {
+            console.log(
+              '[categorization] fuzzy merchant match',
+              { 
+                input: merchantNameForFuzzy, 
+                matched: fuzzy.canonicalName, 
+                score: fuzzy.score.toFixed(3), 
+                category: fuzzy.category 
+              },
+            );
+          }
+          
+          const base: CategorizedTransaction = {
+            ...baseCategorized,
+            category: mappedCategory,
+            categorySource: 'merchant-db-fuzzy',
+            categoryConfidence: Math.max(0.85, fuzzy.score),
+            merchant: fuzzy.canonicalName,
+            categoryExplanation: {
+              ruleId: `fuzzy:${fuzzy.merchantId}`,
+              merchantName: fuzzy.canonicalName,
+            },
+          };
+          base.categoryConfidence = adjustConfidenceForSignMismatch(row, base.category, base.categoryConfidence ?? 0.85);
+          return applySignCategoryGuards(txKind, row, base);
+        }
+      }
+    } catch (err) {
+      console.warn('[categorization] fuzzy merchant matching failed', err);
+      // Continue to next stage
+    }
+  }
+
+  // ============================================
+  // STAGE 4: Heuristics (direction, keywords, periodicity)
+  // ============================================
+  // Only run heuristics if no category was set yet, or confidence is low (< 0.7)
+  // This ensures we never override high-confidence rule/fuzzy/user categorizations
+  const currentCategory = baseCategorized.category;
+  const currentConfidence = baseCategorized.categoryConfidence ?? 0;
+  const shouldRunHeuristics = !currentCategory || 
+                               currentCategory === 'other' || 
+                               currentConfidence < 0.7;
+
+  // Try recurring pattern detection (requires history)
+  // This can override earlier rules if it finds a recurring pattern, especially for Uber subscriptions
+  if (ctx.history && ctx.history.length >= 2) {
+    const recurringResult = detectRecurringPattern(row, ctx.history);
+    if (recurringResult) {
+      // Check if this is an Uber transaction that might be a subscription
+      const isUberTransaction = (merchantName?.toUpperCase().includes('UBER') ?? false) ||
+                                (row.rawText?.toUpperCase().includes('UBER') ?? false);
+      
+      // For Uber transactions, allow recurring detection to override if it finds a subscription pattern
+      // This ensures monthly Uber One/Pass charges are marked as recurring even if initially
+      // categorized as transport:rideshare by the base rule
+      const isUberSubscription = isUberTransaction && 
+                                 recurringResult.reason === 'heuristic:recurring' &&
+                                 recurringResult.category === 'transport:rideshare';
+      
+      // Recurring detection can override if:
+      // 1. No category set yet, OR
+      // 2. Category is 'other', OR
+      // 3. Recurring confidence is higher, OR
+      // 4. This is an Uber subscription (should always override base Uber rule)
+      const shouldOverride = !currentCategory || 
+                             currentCategory === 'other' || 
+                             recurringResult.confidence > (currentConfidence ?? 0) ||
+                             isUberSubscription;
+      
+      if (shouldOverride) {
+        return applySignCategoryGuards(txKind, row, {
+          ...baseCategorized,
+          category: recurringResult.category,
+          categorySource: recurringResult.reason as any, // 'heuristic:recurring' or similar
+          categoryConfidence: recurringResult.confidence,
+          categoryExplanation: {
+            ruleId: recurringResult.reason,
+          },
+        });
+      }
+    }
+  }
+
+  if (shouldRunHeuristics) {
+
+    // Income-only heuristics (salary)
+    if (txKind === 'income' || txKind === 'income_salary') {
+      const salaryMatch = detectSalary(row, cleanedText);
+      if (salaryMatch) {
+        return applySignCategoryGuards(txKind, row, {
+          ...baseCategorized,
+          category: salaryMatch.category,
+          categorySource: 'heuristic:salary',
+          categoryConfidence: salaryMatch.confidence,
+          categoryExplanation: {
+            ruleId: salaryMatch.reason,
+          },
+        });
+      }
+    }
+
+    // Expense-only heuristics
+    if (txKind === 'expense') {
+      const rentMatch = detectRentOrHousing(row, cleanedText);
+      if (rentMatch) {
+        return applySignCategoryGuards(txKind, row, {
+          ...baseCategorized,
+          category: rentMatch.category,
+          categorySource: rentMatch.reason as any, // 'heuristic:rent' or 'heuristic:housing'
+          categoryConfidence: rentMatch.confidence,
+          categoryExplanation: {
+            ruleId: rentMatch.reason,
+          },
+        });
+      }
+    }
+
+    // Fall back to general heuristics (but keep separated by kind via row.direction)
+    const heuristicMatch = applyHeuristics(row, cleanedText);
+    if (heuristicMatch) {
+      // Map reason to categorySource
+      let categorySource: string = 'fallback';
+      if (heuristicMatch.reason.startsWith('heuristic:')) {
+        categorySource = heuristicMatch.reason;
+      }
+
+      return applySignCategoryGuards(txKind, row, {
+        ...baseCategorized,
+        category: heuristicMatch.category,
+        categorySource: categorySource as any,
+        categoryConfidence: heuristicMatch.confidence,
+        categoryExplanation: {
+          ruleId: heuristicMatch.reason,
+        },
+      });
+    }
+  }
+
+  // ============================================
+  // STAGE 5: Transfer / internal movement detection
+  // ============================================
+  const transferMatch = detectTransfer(row, cleanedText);
+  if (transferMatch) {
+    const res: CategorizedTransaction = {
+      ...baseCategorized,
+      category: transferMatch.category,
+      categorySource: 'fallback',
+      categoryConfidence: transferMatch.confidence,
+      categoryExplanation: {
+        ruleId: transferMatch.reason,
+      },
+    };
+    res.categoryConfidence = adjustConfidenceForSignMismatch(row, res.category, res.categoryConfidence ?? 0.7);
+    return applySignCategoryGuards(txKind, row, res);
+  }
+
+  // ============================================
+  // STAGE 6: Final fallback
+  // ============================================
+  return applySignCategoryGuards(txKind, row, {
+    ...baseCategorized,
     category: 'other',
     categorySource: 'unknown',
     categoryConfidence: 0.1,
-  };
+  });
 }
 

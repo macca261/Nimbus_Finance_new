@@ -1,7 +1,7 @@
 import type { Database } from '../db';
 import { db as defaultDb } from '../db';
 
-export type ImportListItem = {
+export type ImportSummary = {
   id: number;
   batchId: string | null;
   profileId: string;
@@ -10,6 +10,9 @@ export type ImportListItem = {
   transactionCount: number;
   warnings: string[];
   createdAt: string;
+  source: string;
+  rowCount: number;
+  insertedCount: number;
 };
 
 export type DeleteImportsResult = {
@@ -17,7 +20,7 @@ export type DeleteImportsResult = {
   deletedTransactions: number;
 };
 
-export function listImports(limit = 50, conn: Database = defaultDb): ImportListItem[] {
+export function listImports(limit = 50, conn: Database = defaultDb): ImportSummary[] {
   const stmt = conn.prepare(
     `SELECT id, batchId, profileId, fileName, confidence, transactionCount, warnings, createdAt
      FROM imports
@@ -35,16 +38,34 @@ export function listImports(limit = 50, conn: Database = defaultDb): ImportListI
     createdAt: string;
   }>;
 
-  return rows.map(row => ({
-    id: row.id,
-    batchId: row.batchId ?? null,
-    profileId: row.profileId,
-    fileName: row.fileName,
-    confidence: row.confidence,
-    transactionCount: row.transactionCount,
-    warnings: row.warnings ? (JSON.parse(row.warnings) as string[]) : [],
-    createdAt: row.createdAt,
-  }));
+  const countByBatch = conn.prepare(
+    `SELECT COUNT(1) AS c FROM transactions WHERE importBatchId = ?`
+  );
+  const countByFile = conn.prepare(
+    `SELECT COUNT(1) AS c FROM transactions WHERE importBatchId IS NULL AND importFile = ?`
+  );
+
+  return rows.map(row => {
+    const insertedRow = row.batchId
+      ? (countByBatch.get(row.batchId) as { c?: number } | undefined)
+      : (countByFile.get(row.fileName) as { c?: number } | undefined);
+
+    const insertedCount = insertedRow?.c ?? 0;
+
+    return {
+      id: row.id,
+      batchId: row.batchId ?? null,
+      profileId: row.profileId,
+      fileName: row.fileName,
+      confidence: row.confidence,
+      transactionCount: row.transactionCount,
+      warnings: row.warnings ? (JSON.parse(row.warnings) as string[]) : [],
+      createdAt: row.createdAt,
+      source: row.profileId,
+      rowCount: row.transactionCount,
+      insertedCount,
+    };
+  });
 }
 
 export function deleteImportsByIds(ids: Array<number | string>, conn: Database = defaultDb): DeleteImportsResult {

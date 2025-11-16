@@ -58,6 +58,12 @@ export function extractMerchant(text: string): string | undefined {
   // PayPal pattern: "PAYPAL *<Merchant>"
   const paypal = t.match(/PAYPAL\s*\*\s*([A-Z0-9\- ]{3,})/i);
   if (paypal) return paypal[1].trim();
+  // PayPal "Ihr Einkauf bei" patterns often include concrete merchant later
+  const einkaufBei = t.match(/Ihr\s+Einkauf\s+bei\s+([A-Za-zÄÖÜäöü\s\.]*?Uber\s*(?:Payments\s*)?BV)/i);
+  if (einkaufBei) return einkaufBei[1].trim();
+  // Explicit Uber detection regardless of PayPal wording
+  const uber = t.match(/Uber\s*(?:Payments\s*)?BV/i);
+  if (uber) return uber[0].trim();
   // Card payment patterns
   const card = t.match(/(?:POS|Kartenzahlung|KARTENZAHLUNG)\s+([A-ZÄÖÜa-zäöü0-9\-\&\.,\s]{3,})/i);
   if (card) return card[1].trim();

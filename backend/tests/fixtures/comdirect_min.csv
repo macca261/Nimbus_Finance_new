@@ -1,4 +1,11 @@
-Buchungstag;Wertstellung;Verwendungszweck;Betrag;Währung;IBAN;Gegenkonto;Kategorie;Code
-01.03.2025;01.03.2025;GEHALT ACME GMBH;3.000,00;EUR;DE00123456780123000000;;;Gehalt
-02.03.2025;02.03.2025;REWE MARKT 123 BERLIN;-31,24;EUR;DE00123456780123000000;;;Kartenzahlung
-03.03.2025;03.03.2025;KARTENENTGELT MÄRZ;-9,9;EUR;DE00123456780123000000;;;Gebühr
+F				
+Umsätze Girokonto	Zeitraum: 30 Tage			
+
+Neuer Kontostand	97,93 EUR			
+
+				
+
+Buchungstag	Wertstellung (Valuta)	Vorgang	Buchungstext	Umsatz in EUR
+27.10.2025	27.10.2025	Lastschrift / Belastung	Miete	-66,99
+27.10.2025	27.10.2025	Kartenverfügung	REWE MARKT 123 BERLIN	-12,34
+01.03.2025	01.03.2025	Gutschrift	GEHALT ACME GMBH	3.000,00

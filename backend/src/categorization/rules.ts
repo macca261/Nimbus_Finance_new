@@ -1,294 +1,98 @@
-import type { CategoryRule } from './types';
-import rawRules from './rules.json';
+/**
+ * Rules module - Type definitions and re-exports.
+ * 
+ * This module now serves as a type-only module and re-exports runtime functions
+ * from rulesRuntime.ts to maintain backward compatibility.
+ * 
+ * CRITICAL: All runtime logic has been moved to rulesRuntime.ts to break circular dependencies.
+ * This module should NOT contain any runtime code that could cause module loading issues.
+ */
 
-export type Rule = {
-  if: {
-    merchant?: string[];
-    textContains?: string[];
-  };
-  category: string;
-};
+import type { CategoryRule, CategoryRuleConditions, MerchantPattern } from './types';
+import type { CategoryId } from './categoryRegistry';
 
-export type RuleHit = {
-  category: string;
-  source: 'rule';
-};
+// Re-export runtime functions and types from rulesRuntime to maintain backward compatibility
+// This allows existing code that imports from './rules' to continue working
+export {
+  applyRules,
+  applyRulesForRow,
+  applyBasicRules,
+  SYSTEM_RULES,
+  SYSTEM_RULES_CONFIG,
+  type ApplyRulesResult,
+  type RuleHit,
+  type RuleHitLegacy,
+  type Rule,
+} from './rulesRuntime';
 
-const BASIC_RULES = rawRules as Rule[];
+// Re-export types from types.ts (these are used by other modules)
+export type { CategoryRule, CategoryRuleConditions, MerchantPattern } from './types';
 
-export function applyRules(merchant: string | undefined, rawText: string): RuleHit | null {
-  const haystack = (rawText || '').toLowerCase();
+// Legacy exports for backward compatibility
+export type NormalizationRule = CategoryRule;
 
-  for (const rule of BASIC_RULES) {
-    let matches = true;
+export type RuleSet = NormalizationRule[];
 
-    if (rule.if.merchant && rule.if.merchant.length > 0) {
-      matches = matches && !!merchant && rule.if.merchant.includes(merchant);
-    }
-
-    if (matches && rule.if.textContains && rule.if.textContains.length > 0) {
-      matches = rule.if.textContains.some(token => haystack.includes(token.toLowerCase()));
-    }
-
-    if (matches) {
-      return { category: rule.category, source: 'rule' };
-    }
-  }
-
-  return null;
+export interface ApplyRulesInput {
+  normalizedText: string;
+  normalizedDescription: string;
+  merchant?: string;
+  bookingDate: string;
+  amountCents: number;
+  currency: string;
+  direction: 'in' | 'out';
+  raw: Record<string, unknown>;
 }
 
-export const SYSTEM_RULES: CategoryRule[] = [
-  {
-    id: 'income_salary_keywords',
-    enabled: true,
-    source: 'system',
-    score: 220,
-    when: { direction: 'in', contains: ['GEHALT', 'LOHN', 'VERGÜTUNG'] },
-    setCategory: 'income:salary',
-  },
-  {
-    id: 'income_salary_payroll',
-    enabled: true,
-    source: 'system',
-    score: 210,
-    when: { direction: 'in', contains: ['PAYROLL', 'SALARY'] },
-    setCategory: 'income:salary',
-  },
-  {
-    id: 'income_freelance_keywords',
-    enabled: true,
-    source: 'system',
-    score: 200,
-    when: { direction: 'in', contains: ['HONORAR', 'RECHNUNG'] },
-    setCategory: 'income:freelance',
-  },
-  {
-    id: 'income_refund_keywords',
-    enabled: true,
-    source: 'system',
-    score: 170,
-    when: { direction: 'in', contains: ['ERSTATTUNG', 'RÜCKERSTATTUNG', 'GUTSCHRIFT'] },
-    setCategory: 'income:refunds',
-  },
-  {
-    id: 'housing_rent_keywords',
-    enabled: true,
-    source: 'system',
-    score: 200,
-    when: { direction: 'out', contains: ['MIETE', 'KALTMIETE', 'MIETZAHLUNG'] },
-    setCategory: 'housing:rent',
-  },
-  {
-    id: 'housing_utilities_keywords',
-    enabled: true,
-    source: 'system',
-    score: 190,
-    when: { direction: 'out', contains: ['STADTWERK', 'STROM', 'GAS', 'HEIZUNG', 'WASSER'] },
-    setCategory: 'housing:utilities',
-  },
-  {
-    id: 'housing_mortgage_keywords',
-    enabled: true,
-    source: 'system',
-    score: 180,
-    when: { direction: 'out', contains: ['HYPOTHEK', 'BAUSPARKASSE', 'BAUSPAR'] },
-    setCategory: 'housing:mortgage',
-  },
-  {
-    id: 'groceries_discounter_keywords',
-    enabled: true,
-    source: 'system',
-    score: 195,
-    when: { direction: 'out', contains: ['REWE', 'EDEKA', 'LIDL'] },
-    setCategory: 'groceries',
-  },
-  {
-    id: 'dining_restaurant_keywords',
-    enabled: true,
-    source: 'system',
-    score: 185,
-    when: { direction: 'out', contains: ['RESTAURANT', 'GASTHAUS'] },
-    setCategory: 'dining',
-  },
-  {
-    id: 'dining_cafe_keywords',
-    enabled: true,
-    source: 'system',
-    score: 175,
-    when: { direction: 'out', contains: ['BÄCKEREI', 'CAFÉ', 'CAFE'] },
-    setCategory: 'dining:cafe',
-  },
-  {
-    id: 'dining_delivery_keywords',
-    enabled: true,
-    source: 'system',
-    score: 185,
-    when: { direction: 'out', contains: ['LIEFERANDO', 'UBER EATS', 'DELIVEROO'] },
-    setCategory: 'dining:delivery',
-  },
-  {
-    id: 'transport_public_keywords',
-    enabled: true,
-    source: 'system',
-    score: 190,
-    when: { direction: 'out', contains: ['DEUTSCHE BAHN', 'DB', 'ÖPNV'] },
-    setCategory: 'transport:public',
-  },
-  {
-    id: 'transport_fuel_keywords',
-    enabled: true,
-    source: 'system',
-    score: 185,
-    when: { direction: 'out', contains: ['TANKSTELLE', 'BENZIN', 'DIESEL'] },
-    setCategory: 'transport:fuel',
-  },
-  {
-    id: 'transport_rideshare_keywords',
-    enabled: true,
-    source: 'system',
-    score: 180,
-    when: { direction: 'out', contains: ['UBER', 'TAXI'] },
-    setCategory: 'transport:rideshare',
-  },
-  {
-    id: 'subscriptions_streaming_keywords',
-    enabled: true,
-    source: 'system',
-    score: 195,
-    when: { direction: 'out', contains: ['NETFLIX', 'SPOTIFY', 'DISNEY'] },
-    setCategory: 'subscriptions:streaming',
-  },
-  {
-    id: 'subscriptions_software_keywords',
-    enabled: true,
-    source: 'system',
-    score: 185,
-    when: { direction: 'out', contains: ['SOFTWARE', 'LICENCE', 'LICENZ'] },
-    setCategory: 'subscriptions:software',
-  },
-  {
-    id: 'subscriptions_telecom_keywords',
-    enabled: true,
-    source: 'system',
-    score: 190,
-    when: { direction: 'out', contains: ['HANDY', 'MOBILFUNK', 'TELEKOM'] },
-    setCategory: 'subscriptions:telecom',
-  },
-  {
-    id: 'shopping_general_keywords',
-    enabled: true,
-    source: 'system',
-    score: 155,
-    when: { direction: 'out', contains: ['SHOP', 'STORE'] },
-    setCategory: 'shopping',
-  },
-  {
-    id: 'shopping_electronics_keywords',
-    enabled: true,
-    source: 'system',
-    score: 165,
-    when: { direction: 'out', contains: ['MEDIA MARKT', 'SATURN', 'ELECTRO'] },
-    setCategory: 'shopping:electronics',
-  },
-  {
-    id: 'shopping_home_keywords',
-    enabled: true,
-    source: 'system',
-    score: 165,
-    when: { direction: 'out', contains: ['IKEA', 'MÖBEL', 'HOME'] },
-    setCategory: 'shopping:home',
-  },
-  {
-    id: 'health_keywords',
-    enabled: true,
-    source: 'system',
-    score: 175,
-    when: { direction: 'out', contains: ['APOTHEKE', 'PHARMAZIE', 'GESUNDHEIT'] },
-    setCategory: 'health',
-  },
-  {
-    id: 'insurance_keywords',
-    enabled: true,
-    source: 'system',
-    score: 180,
-    when: { direction: 'out', contains: ['VERSICHERUNG', 'POLICE'] },
-    setCategory: 'insurance',
-  },
-  {
-    id: 'education_keywords',
-    enabled: true,
-    source: 'system',
-    score: 150,
-    when: { direction: 'out', contains: ['BILDUNG', 'KURS', 'UNI'] },
-    setCategory: 'education',
-  },
-  {
-    id: 'fees_bank_keywords',
-    enabled: true,
-    source: 'system',
-    score: 205,
-    when: {
-      direction: 'out',
-      contains: ['KONTOFÜHRUNGSGEBÜHR', 'ÜBERWEISUNGSGEBÜHR', 'SEPA GEBÜHR', 'KARTENENTGELT', 'KARTENGEBÜHR'],
-    },
-    setCategory: 'fees:bank',
-  },
-  {
-    id: 'fees_service_keywords',
-    enabled: true,
-    source: 'system',
-    score: 175,
-    when: { direction: 'out', contains: ['SERVICEGEBÜHR', 'BEARBEITUNGSGEBÜHR', 'KLARNA'] },
-    setCategory: 'fees:service',
-  },
-  {
-    id: 'taxes_keywords',
-    enabled: true,
-    source: 'system',
-    score: 195,
-    when: { direction: 'out', contains: ['FINANZAMT', 'STEUER', 'ABGABE'] },
-    setCategory: 'taxes',
-  },
-  {
-    id: 'savings_brokerage_keywords',
-    enabled: true,
-    source: 'system',
-    score: 185,
-    when: { direction: 'out', contains: ['DEPOT', 'BROKER', 'TRADE REPUBLIC', 'SCALABLE'] },
-    setCategory: 'savings:brokerage',
-  },
-  {
-    id: 'savings_pension_keywords',
-    enabled: true,
-    source: 'system',
-    score: 170,
-    when: { direction: 'out', contains: ['RIESTER', 'RENTE', 'PENSIONSKASSE'] },
-    setCategory: 'savings:pension',
-  },
-  {
-    id: 'internal_transfer_keywords',
-    enabled: true,
-    source: 'system',
-    score: 210,
-    when: { direction: 'out', contains: ['EIGENE ÜBERTRAGUNG', 'INTERN', 'UMBUCHUNG'] },
-    setCategory: 'internal:own-account',
-  },
-  {
-    id: 'internal_savings_keywords',
-    enabled: true,
-    source: 'system',
-    score: 200,
-    when: { direction: 'out', contains: ['SPARKONTO', 'TAGESGELD'] },
-    setCategory: 'internal:savings',
-  },
-  {
-    id: 'charity_keywords',
-    enabled: true,
-    source: 'system',
-    score: 160,
-    when: { direction: 'out', contains: ['SPENDE', 'DONATION', 'CHARITY'] },
-    setCategory: 'charity',
-  },
-];
+export interface ApplyRulesOutput {
+  normalizedText: string;
+  normalizedDescription: string;
+  merchant?: string;
+  categoryId?: string | null;
+  categorySource?: 'rule' | 'ml' | 'user' | 'ai' | 'unknown' | 'fallback';
+  debug?: unknown[];
+}
 
+// Legacy function for backward compatibility with old applyRules signature
+export function applyRulesLegacy(
+  input: ApplyRulesInput,
+  ruleSet: RuleSet = [],
+  opts?: { dryRun?: boolean }
+): ApplyRulesOutput {
+  // Import at function level to avoid circular dependency issues
+  const { applyRulesForRow } = require('./rulesRuntime');
+  
+  // Convert ApplyRulesInput to ParsedRow-like structure
+  const row = {
+    bookingDate: input.bookingDate,
+    amountCents: input.amountCents,
+    currency: input.currency,
+    direction: input.direction,
+    accountId: 'unknown',
+    rawText: input.normalizedDescription,
+    normalizedText: input.normalizedText,
+    raw: input.raw,
+    counterparty: input.merchant,
+    valutaDate: null,
+    accountIban: null,
+    counterpartyIban: null,
+    mcc: null,
+    reference: null,
+  };
+  
+  const result = applyRulesForRow(row, { systemRules: ruleSet });
+  
+  const output: ApplyRulesOutput = {
+    normalizedText: input.normalizedText,
+    normalizedDescription: input.normalizedDescription,
+    merchant: input.merchant,
+    categoryId: result.categoryId,
+    categorySource: result.categorySource === 'rule' ? 'rule' : 'unknown',
+  };
+  
+  if (opts?.dryRun) {
+    output.debug = [{ step: 'dryRun', input, ruleSetLength: ruleSet.length }];
+  }
+  
+  return output;
+}

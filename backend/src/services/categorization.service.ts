@@ -36,6 +36,17 @@ const rules: Rule[] = [
   makeKeywordRule(['amazon', 'zalando', 'ikea', 'mediamarkt', 'saturn'], 'Shopping', 0.9),
   // Subscriptions
   makeKeywordRule(['spotify', 'netflix', 'deezer', 'apple.com/bill', 'microsoft*'], 'Subscriptions', 0.92),
+  // Uber Eats (food delivery) - prioritize before generic Uber/transport
+  { match: (s) => /uber\s*(?:\*\s*)?eats|help\.uber\.com/i.test(s) || /uber\s*payments\s*bv/i.test(s) && /eats|liefer|food/i.test(s), result: { category: 'Dining', confidence: 0.9, reason: 'Uber Eats detection' } },
+  // Uber subscription (Uber One/Pass/Membership) -> Subscriptions
+  { match: (s) => /uber\s*(one|pass)|membership/i.test(s), result: { category: 'Subscriptions', confidence: 0.85, reason: 'Uber subscription keywords' } },
+  // Uber rideshare - generic Uber (excluding Eats/subscription keywords)
+  { match: (s, _amt) => {
+      if (!/uber\b/i.test(s)) return false;
+      if (/eats|help\.uber\.com/i.test(s)) return false;
+      if (/\b(one|pass|membership)\b/i.test(s)) return false;
+      return true;
+    }, result: { category: 'Transportation', confidence: 0.9, reason: 'Uber ride' } },
   // Transportation
   makeKeywordRule(['aral', 'shell', 'total', 'esso', 'db fern', 'deutsche bahn', 'bvg', 'hvv', 'mvv'], 'Transportation', 0.9),
   // Dining

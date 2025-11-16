@@ -250,7 +250,14 @@ export const RulesTable: React.FC<RulesTableProps> = ({ highlightRuleId }) => {
     if (!rules.length) {
       return (
         <div className="rounded-xl border border-slate-200/70 bg-white/60 p-8 text-sm text-slate-500 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/60 dark:text-slate-400">
-          Noch keine Normalizer-Regeln vorhanden. Lege eine neue Regel an, um Händler zu vereinheitlichen.
+          <p>Noch keine Normalizer-Regeln vorhanden. Lege eine neue Regel an, um Händler zu vereinheitlichen.</p>
+          <button
+            type="button"
+            onClick={openCreateDialog}
+            className="mt-4 inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400"
+          >
+            Neue Regel anlegen
+          </button>
         </div>
       );
     }

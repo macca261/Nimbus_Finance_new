@@ -1,0 +1,121 @@
+{
+  "merchants": [
+    {
+      "id": "merchant_rewe",
+      "names": ["REWE", "REWE MARKT", "REWE Markt GmbH", "REWE CITY", "REWE MARKT GMBH"],
+      "patterns": ["\\brewe\\b", "rewe.*markt"],
+      "mainCategoryId": "groceries",
+      "subCategoryId": "groceries_supermarket",
+      "confidence": 0.98,
+      "localeHints": ["de"],
+      "metadata": {
+        "website": "https://www.rewe.de"
+      }
+    },
+    {
+      "id": "merchant_lidl",
+      "names": ["LIDL", "LIDL SAGT DANKE", "LIDL MARKT", "LIDL SAGT"],
+      "patterns": ["\\blidl\\b"],
+      "mainCategoryId": "groceries",
+      "subCategoryId": "groceries_supermarket",
+      "confidence": 0.98
+    },
+    {
+      "id": "merchant_aldi",
+      "names": ["ALDI", "ALDI SÜD", "ALDI NORD", "ALDI SUD", "ALDI MARKT"],
+      "patterns": ["\\baldi\\b"],
+      "mainCategoryId": "groceries",
+      "subCategoryId": "groceries_supermarket",
+      "confidence": 0.98
+    },
+    {
+      "id": "merchant_edeka",
+      "names": ["EDEKA", "EDEKA MARKT", "EDEKA MARKT GMBH"],
+      "patterns": ["\\bedeka\\b"],
+      "mainCategoryId": "groceries",
+      "subCategoryId": "groceries_supermarket",
+      "confidence": 0.98
+    },
+    {
+      "id": "merchant_netto",
+      "names": ["NETTO", "NETTO MARKEN-DISCOUNT"],
+      "patterns": ["\\bnetto\\b"],
+      "mainCategoryId": "groceries",
+      "subCategoryId": "groceries_supermarket",
+      "confidence": 0.98
+    },
+    {
+      "id": "merchant_penny",
+      "names": ["PENNY", "PENNY MARKT"],
+      "patterns": ["\\bpenny\\b"],
+      "mainCategoryId": "groceries",
+      "subCategoryId": "groceries_supermarket",
+      "confidence": 0.98
+    },
+    {
+      "id": "merchant_dm",
+      "names": ["DM", "DM DROGERIE", "DM DROGERIE MARKT", "DM-DROGERIE MARKT"],
+      "patterns": ["\\bdm\\b"],
+      "mainCategoryId": "shopping",
+      "subCategoryId": "shopping",
+      "confidence": 0.98
+    },
+    {
+      "id": "merchant_rossmann",
+      "names": ["ROSSMANN", "ROSSMANN DROGERIE"],
+      "patterns": ["\\brossmann\\b"],
+      "mainCategoryId": "shopping",
+      "subCategoryId": "shopping",
+      "confidence": 0.98
+    },
+    {
+      "id": "merchant_deutsche_bahn",
+      "names": ["DB", "Deutsche Bahn", "DB FERNVERKEHR", "DEUTSCHE BAHN AG"],
+      "patterns": ["deutsche\\s+bahn", "\\bdb fernverkehr\\b"],
+      "mainCategoryId": "transport",
+      "subCategoryId": "transport_public",
+      "confidence": 0.97
+    },
+    {
+      "id": "merchant_netflix",
+      "names": ["NETFLIX.COM", "NETFLIX", "NETFLIX INTERNATIONAL"],
+      "patterns": ["netflix"],
+      "mainCategoryId": "subscriptions",
+      "subCategoryId": "subscriptions:streaming",
+      "confidence": 0.99
+    },
+    {
+      "id": "merchant_spotify",
+      "names": ["SPOTIFY", "SPOTIFY AB", "SPOTIFY PREMIUM"],
+      "patterns": ["spotify"],
+      "mainCategoryId": "subscriptions",
+      "subCategoryId": "subscriptions:streaming",
+      "confidence": 0.99
+    },
+    {
+      "id": "merchant_uber",
+      "names": ["UBER", "UBER *EATS", "UBER TRIP", "UBER BV", "UBER EATS"],
+      "patterns": ["uber(\\s|\\*)"],
+      "mainCategoryId": "transport",
+      "subCategoryId": "transport:rideshare",
+      "confidence": 0.9
+    },
+    {
+      "id": "merchant_amazon",
+      "names": ["AMAZON", "AMAZON EU S.A R.L", "AMAZON.DE", "AMAZON MARKETPLACE"],
+      "patterns": ["amazon"],
+      "mainCategoryId": "shopping",
+      "subCategoryId": "shopping:online",
+      "confidence": 0.95
+    },
+    {
+      "id": "merchant_drillisch",
+      "names": ["DRILLISCH", "DRILLISCH ONLINE", "DRILLISCH ONLINE GMBH & CO. KG"],
+      "patterns": ["drillisch"],
+      "mainCategoryId": "subscriptions",
+      "subCategoryId": "subscriptions:telecom",
+      "confidence": 0.95
+    }
+  ]
+}
+

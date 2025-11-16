@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { testNormalizer, type NormalizerResult } from '../../api/normalizer';
-import { formatCurrency } from '../../lib/format';
 
 type PreviewCardProps = {
   text: string;
@@ -48,7 +47,16 @@ export const PreviewCard: React.FC<PreviewCardProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, counterparty, amountCents, currency, bookingDate]);
 
-  const amount = formatCurrency(amountCents / 100, currency);
+  let amount: string;
+  try {
+    amount = new Intl.NumberFormat('de-DE', {
+      style: 'currency',
+      currency: currency.toUpperCase(),
+      maximumFractionDigits: 2,
+    }).format(amountCents / 100);
+  } catch {
+    amount = `${(amountCents / 100).toFixed(2)} ${currency.toUpperCase()}`;
+  }
   const date = new Date(bookingDate);
   const dateLabel = Number.isNaN(date.getTime()) ? bookingDate : date.toLocaleDateString('de-DE');
 
@@ -73,7 +81,7 @@ export const PreviewCard: React.FC<PreviewCardProps> = ({
         </button>
       </header>
 
-      <div className="grid gap-4 rounded-xl border border-slate-200/70 bg-slate-50/80 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+        <div className="grid gap-4 rounded-xl border border-slate-200/70 bg-slate-50/80 p-4 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
         <div>
           <p className="text-xs uppercase text-slate-400 dark:text-slate-500">Vorher</p>
           <p className="mt-1 font-medium text-slate-700 dark:text-slate-200">{text}</p>
@@ -84,10 +92,12 @@ export const PreviewCard: React.FC<PreviewCardProps> = ({
             {amount} · {dateLabel}
           </p>
         </div>
-        <div>
+          <div aria-live="polite">
           <p className="text-xs uppercase text-slate-400 dark:text-slate-500">Nachher</p>
           {error ? (
-            <p className="mt-1 text-xs text-rose-500 dark:text-rose-300">{error}</p>
+              <p className="mt-1 text-xs text-rose-500 dark:text-rose-300" role="alert">
+                {error}
+              </p>
           ) : loading ? (
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Lade Vorschau …</p>
           ) : (

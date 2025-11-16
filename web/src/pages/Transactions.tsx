@@ -1,9 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Link2 } from 'lucide-react';
 import { AppShell } from '../layout/AppShell';
 import { formatCurrency, formatDate } from '../lib/format';
 import { CATEGORY_OPTIONS, getCategoryMeta } from '../lib/categories';
 import CategoryControl from '../components/CategoryControl';
+import { ExplanationTooltip } from '../components/ExplanationTooltip';
+import { PromoteRuleButton } from '../components/PromoteRuleButton';
+import { UserRulesPanel } from '../components/UserRulesPanel';
+import { TransactionFlagsBadges } from '../components/Badges/TransactionFlagsBadges';
 
 type ApiTransaction = {
   id: number;
@@ -23,7 +28,16 @@ type ApiTransaction = {
   categorySource?: string | null;
   categoryConfidence?: number | null;
   categoryRuleId?: string | null;
+  categorizationReasonCode?: string;
+  categorizationReasonText?: string;
   isInternalTransfer?: boolean;
+  isPassThrough?: boolean;
+  passThroughGroupId?: string | null;
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | null;
+  internalTransferDirection?: 'in' | 'out' | null;
+  isRefund?: boolean;
+  isRefunded?: boolean;
+  isReimbursement?: boolean;
   transferLinkId?: string | null;
   source?: string | null;
   sourceProfile?: string | null;
@@ -41,26 +55,60 @@ type DisplayTransaction = ApiTransaction & { displayId: string; linkedCount?: nu
 const PAGE_SIZE = 25;
 
 export const Transactions: React.FC = () => {
+  // Read initial filters from URL (only on first mount)
+  const useTransactionUrlFilters = () => {
+    const location = useLocation();
+    const params = new URLSearchParams(location.search);
+    const initialCategory = params.get('category') ?? undefined;
+    const initialOnlyOther = params.get('onlyOther') === '1';
+    const initialReview = (params.get('review') as 'uncategorized' | 'low-confidence' | null) ?? null;
+    const initialFrom = params.get('from') ?? undefined;
+    const initialTo = params.get('to') ?? undefined;
+    const initialAccountId = params.get('accountId') ?? undefined;
+    return {
+      initialCategory,
+      initialOnlyOther,
+      initialReview,
+      initialFrom,
+      initialTo,
+      initialAccountId,
+    };
+  };
+
+  const {
+    initialCategory,
+    initialOnlyOther,
+    initialReview,
+    initialFrom,
+    initialTo,
+    // initialAccountId, // Reserved for future account filter wiring
+  } = useTransactionUrlFilters();
+
   const [items, setItems] = useState<ApiTransaction[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
+  const [showRulesPanel, setShowRulesPanel] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [filters, setFilters] = useState({
     search: '',
-    category: 'all',
-    startDate: '',
-    endDate: '',
+    category: initialCategory ?? 'all',
+    startDate: initialFrom ?? '',
+    endDate: initialTo ?? '',
     minAmount: '',
     maxAmount: '',
+    // Treat review=uncategorized as "Nur Sonstiges anzeigen"
+    showOnlyOther: initialReview === 'uncategorized' ? true : initialOnlyOther,
   });
   const [draftFilters, setDraftFilters] = useState({
     search: '',
-    category: 'all',
-    startDate: '',
-    endDate: '',
+    category: initialCategory ?? 'all',
+    startDate: initialFrom ?? '',
+    endDate: initialTo ?? '',
     minAmount: '',
     maxAmount: '',
+    showOnlyOther: initialReview === 'uncategorized' ? true : initialOnlyOther,
   });
 
   const query = useMemo(() => {
@@ -102,6 +150,23 @@ export const Transactions: React.FC = () => {
     return () => controller.abort();
   }, [query]);
 
+  // Helper to reload current page
+  const reload = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`/api/transactions?${query}`);
+      if (!res.ok) throw new Error('Transaktionen konnten nicht geladen werden.');
+      const json = (await res.json()) as TransactionResponse;
+      setItems((json.transactions ?? []).map(tx => ({ ...tx, bookingDate: tx.bookingDate ?? tx.bookedAt ?? null })));
+      setTotal(json.total ?? 0);
+    } catch (e: any) {
+      setError(e?.message || 'Transaktionen konnten nicht geladen werden.');
+    } finally {
+      setLoading(false);
+    }
+  }, [query]);
+
   const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
 
   const handleFilterSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -118,6 +183,7 @@ export const Transactions: React.FC = () => {
       endDate: '',
       minAmount: '',
       maxAmount: '',
+      showOnlyOther: false,
     };
     setFilters(defaults);
     setDraftFilters(defaults);
@@ -150,7 +216,17 @@ export const Transactions: React.FC = () => {
         linkedCount: group.length,
       });
     }
+    
+    // Apply "showOnlyOther" filter
+    if (filters.showOnlyOther) {
+      return results.filter(tx => tx.category === 'other' || tx.category === 'other_review');
+    }
+    
     return results;
+  }, [items, filters.showOnlyOther]);
+  
+  const otherCount = useMemo(() => {
+    return items.filter(tx => tx.category === 'other' || tx.category === 'other_review').length;
   }, [items]);
 
   const handleOverrideApplied = useCallback(
@@ -170,6 +246,70 @@ export const Transactions: React.FC = () => {
     [],
   );
 
+  // Selection helpers and pass-through predicates
+  const toggleSelected = useCallback((id: number, checked: boolean) => {
+    setSelectedIds(prev => {
+      if (checked) return prev.includes(id) ? prev : [...prev, id];
+      return prev.filter(x => x !== id);
+    });
+  }, []);
+
+  const selectedTxs = useMemo(() => {
+    const set = new Set(selectedIds);
+    return items.filter(tx => set.has(tx.id));
+  }, [selectedIds, items]);
+
+  const canMarkPassThrough = useMemo(() => {
+    if (selectedTxs.length !== 2) return false;
+    const [a, b] = selectedTxs;
+    const aC = typeof a.amountCents === 'number' ? a.amountCents : Math.round(a.amount * 100);
+    const bC = typeof b.amountCents === 'number' ? b.amountCents : Math.round(b.amount * 100);
+    const oppositeSign = (aC < 0 && bC > 0) || (aC > 0 && bC < 0);
+    const diff = Math.abs(Math.abs(aC) - Math.abs(bC));
+    return oppositeSign && diff <= 100;
+  }, [selectedTxs]);
+
+  const canRemovePassThrough = useMemo(() => {
+    if (selectedTxs.length < 1) return false;
+    return selectedTxs.every(tx => Boolean(tx.isPassThrough));
+  }, [selectedTxs]);
+
+  const markAsPassThrough = useCallback(async () => {
+    const ids = selectedIds.slice(0, 2);
+    try {
+      if (ids.length !== 2) return;
+      const res = await fetch('/api/transactions/pass-through', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionIds: ids }),
+      });
+      if (!res.ok) throw new Error('Konnte Durchlaufposten nicht setzen');
+      await reload();
+    } catch {
+      setError('Konnte Durchlaufposten nicht setzen – bitte prüfe Betrag und Auswahl.');
+    } finally {
+      setSelectedIds([]);
+    }
+  }, [selectedIds, reload]);
+
+  const removePassThrough = useCallback(async () => {
+    const ids = selectedIds.slice();
+    try {
+      if (ids.length < 1) return;
+      const res = await fetch('/api/transactions/pass-through/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transactionIds: ids }),
+      });
+      if (!res.ok) throw new Error('Konnte Durchlaufposten nicht entfernen');
+      await reload();
+    } catch {
+      setError('Konnte Durchlaufposten nicht entfernen.');
+    } finally {
+      setSelectedIds([]);
+    }
+  }, [selectedIds, reload]);
+
   return (
     <AppShell>
       <section className="flex flex-col gap-6">
@@ -181,9 +321,17 @@ export const Transactions: React.FC = () => {
                 Durchsuche und filtere deine importierten Buchungen.
               </p>
             </div>
-            <span className="inline-flex w-fit items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-200">
-              {loading ? 'Lade…' : `${total.toLocaleString('de-DE')} Buchungen`}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="inline-flex w-fit items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-200">
+                {loading ? 'Lade…' : `${total.toLocaleString('de-DE')} Buchungen`}
+              </span>
+              <button
+                onClick={() => setShowRulesPanel(true)}
+                className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 transition-colors"
+              >
+                Eigene Regeln verwalten
+              </button>
+            </div>
           </div>
           <form
             onSubmit={handleFilterSubmit}
@@ -268,6 +416,25 @@ export const Transactions: React.FC = () => {
               >
                 Zurücksetzen
               </button>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={filters.showOnlyOther}
+                  onChange={event => {
+                    setFilters(prev => ({ ...prev, showOnlyOther: event.target.checked }));
+                    setDraftFilters(prev => ({ ...prev, showOnlyOther: event.target.checked }));
+                  }}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 dark:border-slate-600 dark:focus:ring-indigo-500/30"
+                />
+                <span className="text-sm text-slate-700 dark:text-slate-300">
+                  Nur 'Sonstiges' anzeigen
+                  {otherCount > 0 && (
+                    <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">
+                      ({otherCount})
+                    </span>
+                  )}
+                </span>
+              </label>
               <span className="text-xs text-slate-400 dark:text-slate-500">
                 {loading ? 'Lade Daten…' : `${total.toLocaleString('de-DE')} Ergebnisse`}
               </span>
@@ -286,6 +453,7 @@ export const Transactions: React.FC = () => {
             <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
               <thead className="bg-slate-100/80 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
                 <tr>
+                  <th className="px-4 py-3 text-left font-semibold w-10"><span className="sr-only">Select</span></th>
                   <th className="px-4 py-3 text-left font-semibold">Datum</th>
                   <th className="px-4 py-3 text-left font-semibold">Beschreibung</th>
                   <th className="px-4 py-3 text-left font-semibold">Kategorie</th>
@@ -332,6 +500,15 @@ export const Transactions: React.FC = () => {
                         : undefined;
                     return (
                       <tr key={tx.displayId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                        <td className="px-4 py-3 align-top">
+                          <input
+                            aria-label="Transaktion auswählen"
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 dark:border-slate-600 dark:focus:ring-indigo-500/30"
+                            checked={selectedIds.includes(tx.id)}
+                            onChange={e => toggleSelected(tx.id, e.target.checked)}
+                          />
+                        </td>
                         <td className="px-4 py-3">{formatDate(tx.bookingDate ?? undefined)}</td>
                         <td className="px-4 py-3">
                           <div className="font-medium text-slate-900 dark:text-slate-100">
@@ -348,37 +525,74 @@ export const Transactions: React.FC = () => {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-2">
-                            <span
-                              className="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-medium"
-                              style={{ backgroundColor: meta.background, color: meta.color }}
+                            <ExplanationTooltip
+                              explanationText={tx.categorizationReasonText}
+                              explanationCode={tx.categorizationReasonCode}
+                              isOther={tx.category === 'other' || tx.category === 'other_review'}
                             >
-                              {showInternal ? <Link2 className="h-3 w-3" /> : null}
-                              {meta.label}
-                            </span>
-                            {showInternal ? (
-                              <div className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                                Interner Transfer
-                                {tx.linkedCount && tx.linkedCount > 1 ? ` · ${tx.linkedCount} Buchungen` : ''}
-                                {transferReasons && transferReasons.length
-                                  ? ` · ${transferReasons.join(', ')}`
-                                  : ''}
-                              </div>
-                            ) : null}
-                            <CategoryControl
-                              id={tx.externalId ?? undefined}
-                              fingerprintInput={fingerprintInput}
-                              category={tx.category}
-                              categorySource={tx.categorySource}
-                              rawText={tx.purpose ?? tx.memo ?? null}
-                              merchant={tx.payee ?? tx.counterpart ?? null}
-                              onApplied={(_resolvedId, next) => handleOverrideApplied(tx.id, next)}
-                            />
+                              <span
+                                className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                                  tx.category === 'other' || tx.category === 'other_review'
+                                    ? 'ring-1 ring-amber-300 dark:ring-amber-500/50'
+                                    : ''
+                                }`}
+                                style={{ backgroundColor: meta.background, color: meta.color }}
+                              >
+                                {showInternal ? <Link2 className="h-3 w-3" /> : null}
+                                {meta.label}
+                              </span>
+                            </ExplanationTooltip>
+                            <div className="flex items-center gap-2">
+                              <TransactionFlagsBadges
+                                isPassThrough={tx.isPassThrough}
+                                isInternalTransfer={tx.isInternalTransfer}
+                                internalTransferKind={tx.internalTransferKind ?? null}
+                                internalTransferDirection={tx.internalTransferDirection ?? null}
+                              />
+                              {showInternal ? (
+                                <div className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                                  Interner Transfer
+                                  {tx.linkedCount && tx.linkedCount > 1 ? ` · ${tx.linkedCount} Buchungen` : ''}
+                                  {transferReasons && transferReasons.length
+                                    ? ` · ${transferReasons.join(', ')}`
+                                    : ''}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <CategoryControl
+                                id={tx.externalId ?? undefined}
+                                fingerprintInput={fingerprintInput}
+                                category={tx.category}
+                                categorySource={tx.categorySource}
+                                rawText={tx.purpose ?? tx.memo ?? null}
+                                merchant={tx.payee ?? tx.counterpart ?? null}
+                                onApplied={(_resolvedId, next) => handleOverrideApplied(tx.id, next)}
+                              />
+                              {/* Show "Merken" button for eligible transactions */}
+                              {tx.category &&
+                                tx.category !== 'other' &&
+                                tx.category !== 'other_review' &&
+                                !tx.isInternalTransfer &&
+                                !tx.isRefund &&
+                                !tx.isRefunded &&
+                                !tx.isReimbursement && (
+                                  <PromoteRuleButton
+                                    transactionId={tx.id}
+                                    category={tx.category}
+                                    merchant={tx.payee ?? tx.counterpart ?? null}
+                                    onSuccess={() => {
+                                      // Optionally refresh or update UI
+                                    }}
+                                  />
+                                )}
+                            </div>
                           </div>
                         </td>
                         <td
                           className={`px-4 py-3 text-right text-sm font-semibold ${
                             tx.amount < 0 ? 'text-rose-600 dark:text-rose-300' : 'text-emerald-600 dark:text-emerald-300'
-                          }`}
+                          } ${tx.isPassThrough ? 'opacity-70' : ''}`}
                         >
                           {formatCurrency(tx.amount)}
                         </td>
@@ -413,6 +627,7 @@ export const Transactions: React.FC = () => {
           </button>
         </div>
       </section>
+      {showRulesPanel && <UserRulesPanel onClose={() => setShowRulesPanel(false)} />}
     </AppShell>
   );
 };

@@ -32,6 +32,7 @@ export const NIMBUS_TAXONOMY_V1: NimbusCategory[] = [
   { id: 'subscriptions:streaming', parentId: 'subscriptions', label: 'Streaming' },
   { id: 'subscriptions:software', parentId: 'subscriptions', label: 'Software & Tools' },
   { id: 'subscriptions:telecom', parentId: 'subscriptions', label: 'Telefon & Internet' },
+  { id: 'subscriptions:transport', parentId: 'subscriptions', label: 'Transport-Abos' },
 
   { id: 'shopping', label: 'Shopping & Konsum' },
   { id: 'shopping:electronics', parentId: 'shopping', label: 'Elektronik & Technik' },
