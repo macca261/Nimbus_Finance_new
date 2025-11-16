@@ -108,7 +108,7 @@ interface MerchantIndexEntry {
  * - Remove common noise patterns
  * - Extract core merchant name (first meaningful word)
  */
-function normalizeMerchantNameForFuzzy(input: string): string {
+export function normalizeMerchantNameForFuzzy(input: string): string {
   if (!input || input.trim().length < 3) return '';
   
   let normalized = input.toLowerCase().trim();

@@ -44,7 +44,7 @@ describe('Real-world comdirect transfers – integration tests', () => {
       purpose: 'Übertrag / Überweisung | Empfänger: Aaron McIntoshKto/IBAN: DE32200411770270381700 BLZ/BIC: COBADEHD077 Ref. 5I2C21PU02U8S56E/42431',
       counterpartName: 'Aaron McIntosh',
       accountIban: 'DE12345678901234567890',
-      counterpartyIban: 'DE32200411770270381700',
+      counterpartyIban: 'DE32200411770270381700', // IBAN extracted from purpose text
       accountId: 'spending-main',
       source: 'csv_bank',
       sourceProfile: 'comdirect',
@@ -153,6 +153,59 @@ describe('Real-world comdirect transfers – integration tests', () => {
     expect(inserted.category?.startsWith('transport')).toBe(false);
     expect(inserted.categoryConfidence).toBeGreaterThanOrEqual(0.85);
     expect(inserted.isInternalTransfer || 0).toBe(0); // Not an internal transfer
+  });
+
+  it('prevents comdirect transfer with exact purpose text from being classified as Uber/transport', () => {
+    // This is the exact case from the debug output: transaction id 414
+    // Purpose: "Übertrag / Überweisung | Empfänger: Aaron McIntoshKto/IBAN: DE32200411770270381700 BLZ/BIC: COBADEHD077  Ref. 5I2C21PU02US856E/42431"
+    // This was incorrectly classified as "transport:rideshare" (Uber) but should be internal transfer
+    
+    const row: CanonicalRow = {
+      bookingDate: '2025-09-15',
+      valueDate: '2025-09-15',
+      amountCents: -270000, // -2700 EUR (matches transaction 414)
+      currency: 'EUR',
+      purpose: 'Übertrag / Überweisung | Empfänger: Aaron McIntoshKto/IBAN: DE32200411770270381700 BLZ/BIC: COBADEHD077  Ref. 5I2C21PU02US856E/42431',
+      counterpartName: 'Aaron McIntosh',
+      accountIban: 'DE12345678901234567890',
+      counterpartyIban: 'DE32200411770270381700', // IBAN should be extracted from purpose text
+      accountId: 'spending-main',
+      source: 'csv_bank',
+      sourceProfile: 'comdirect',
+    };
+
+    const result = insertTransactions([row], db);
+    expect(result.inserted).toBe(1);
+
+    // Query the inserted transaction
+    const inserted = db.prepare(`
+      SELECT 
+        category, category_source, category_rule_id,
+        isInternalTransfer, internalTransferKind, internalTransferDirection,
+        counterpartyIban
+      FROM transactions
+      WHERE amountCents = -270000
+    `).get() as any;
+
+    expect(inserted).toBeDefined();
+    
+    // Critical: Must NOT be transport/Uber
+    expect(inserted.category?.startsWith('transport')).toBe(false);
+    expect(inserted.category).not.toBe('transport');
+    expect(inserted.category).not.toBe('transport:rideshare');
+    
+    // Should be internal transfer (IBAN matches savings account)
+    expect(inserted.isInternalTransfer).toBe(1);
+    expect(inserted.internalTransferKind).toBe('savings');
+    expect(inserted.internalTransferDirection).toBe('out');
+    
+    // Category must be internal transfer category
+    expect(inserted.category).toMatch(/^internal:transfer/);
+    expect(inserted.category_source).toBe('system');
+    expect(inserted.category_rule_id).toMatch(/internal_transfer/);
+    
+    // Verify IBAN was extracted and stored
+    expect(inserted.counterpartyIban).toBe('DE32200411770270381700');
   });
 });
 

@@ -66,8 +66,10 @@ summary.get('/month', (req, res) => {
     const db = (req.app as any).locals.db;
     const includeRefunds = (req.query as any)?.includeRefunds === 'true';
     const includeInternalTransfers = (req.query as any)?.includeInternalTransfers === 'true';
+    const includePassThrough = (req.query as any)?.includePassThrough === 'true';
     const refundClause = getRefundExclusionClause(includeRefunds);
     const internalTransferClause = getInternalTransferExclusionClause(includeInternalTransfers);
+    const passThroughClause = getPassThroughExclusionClause(includePassThrough);
     const inc = db.prepare(`
       SELECT COALESCE(SUM(amountCents),0) AS sum
       FROM transactions
@@ -117,8 +119,10 @@ summary.get('/categories', (req, res) => {
     const monthParam = (req.query as any)?.month as string | undefined;
     const includeRefunds = (req.query as any)?.includeRefunds === 'true';
     const includeInternalTransfers = (req.query as any)?.includeInternalTransfers === 'true';
+    const includePassThrough = (req.query as any)?.includePassThrough === 'true';
     const refundClause = getRefundExclusionClause(includeRefunds);
     const internalTransferClause = getInternalTransferExclusionClause(includeInternalTransfers);
+    const passThroughClause = getPassThroughExclusionClause(includePassThrough);
     const hasMonth = Boolean(monthParam);
     const params: unknown[] = [];
     let whereClause = '';

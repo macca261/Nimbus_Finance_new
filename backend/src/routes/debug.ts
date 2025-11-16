@@ -222,7 +222,7 @@ debugRouter.get('/transaction/:id', (req, res) => {
         nimbusCategory: engineResult.category,
         categoryId: legacyCategoryId,
         categorySource: engineResult.categorySource ?? null,
-        categoryRuleId: engineResult.categoryRuleId ?? null,
+        categoryRuleId: engineResult.categoryExplanation?.ruleId ?? null,
         txKind,
       },
     });

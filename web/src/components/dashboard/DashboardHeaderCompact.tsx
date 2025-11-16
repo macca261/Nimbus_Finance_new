@@ -17,6 +17,15 @@ type DashboardHeaderCompactProps = {
   lastImportInfo?: string | null;
 };
 
+const USER_NAME = 'Aaron';
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 11) return `Guten Morgen, ${USER_NAME}`;
+  if (hour < 18) return `Willkommen zurück, ${USER_NAME}`;
+  return `Guten Abend, ${USER_NAME}`;
+}
+
 export const DashboardHeaderCompact: React.FC<DashboardHeaderCompactProps> = ({
   userName,
   accounts,
@@ -31,8 +40,7 @@ export const DashboardHeaderCompact: React.FC<DashboardHeaderCompactProps> = ({
   onUploadClick,
   lastImportInfo,
 }) => {
-  const greetingName = userName ?? 'Nimbus Nutzer';
-  const greeting = `Guten Morgen, ${greetingName}`;
+  const greeting = getGreeting();
 
   return (
     <div className="grid gap-6 md:grid-cols-12">

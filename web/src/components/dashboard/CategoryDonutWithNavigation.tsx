@@ -12,6 +12,19 @@ type CategoryDonutWithNavigationProps = {
   onCategoryClick: (categoryId: string) => void;
 };
 
+// Internal transfer categories that should be excluded from spending donut
+const INTERNAL_TRANSFER_CATEGORIES = [
+  'internal:transfer_savings',
+  'internal:transfer_wallet',
+  'internal:transfer_other',
+  'internal:own-account',
+  'transfer_internal',
+];
+
+function isInternalTransferCategory(categoryId: string): boolean {
+  return INTERNAL_TRANSFER_CATEGORIES.includes(categoryId) || categoryId.startsWith('internal:transfer_');
+}
+
 export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationProps> = ({
   data,
   loading,
@@ -19,7 +32,8 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
   onCategoryClick,
 }) => {
   const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
-  const filtered = data.filter(slice => slice.total > 0);
+  // Filter out internal transfer categories and zero amounts
+  const filtered = data.filter(slice => slice.total > 0 && !isInternalTransferCategory(slice.id));
   const total = filtered.reduce((sum, slice) => sum + slice.total, 0);
 
   const topFive = filtered
@@ -160,6 +174,9 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
           ) : null}
         </ul>
       </div>
+      <p className="mt-4 text-xs text-slate-500 dark:text-slate-400 text-center">
+        Interne Überträge werden getrennt angezeigt und nicht als Ausgaben gezählt.
+      </p>
     </div>
   );
 };

@@ -50,8 +50,23 @@ export const comdirectProfile: BankProfile = {
     const counterparty =
       valueFor(record, ['Auftraggeber/Empfänger', 'Begünstigter', 'Empfänger']) ||
       valueByIncludes(record, ['auftraggeber', 'empfänger', 'beguenstigter']);
-    const counterpartyIban = valueByIncludes(record, ['iban']);
+    
+    // Extract IBAN from purpose text (comdirect embeds IBAN in Buchungstext like "IBAN: DE32200411770270381700")
     const reference = valueByIncludes(record, ['verwendungszweck', 'buchungstext', 'vorgang']);
+    const purposeText = reference || '';
+    
+    // Try to extract IBAN from a dedicated column first
+    let counterpartyIban = valueByIncludes(record, ['iban']);
+    
+    // If not found in column, extract from purpose text (comdirect format: "IBAN: DE32200411770270381700")
+    if (!counterpartyIban && purposeText) {
+      // Match German IBAN pattern: DE followed by 20 digits
+      // Also handle formats like "Kto/IBAN: DE32200411770270381700" or "IBAN: DE32200411770270381700"
+      const ibanMatch = purposeText.match(/\b(?:IBAN|Kto\/IBAN|Konto\/IBAN)[:\s]+(DE[0-9]{20})\b/i);
+      if (ibanMatch && ibanMatch[1]) {
+        counterpartyIban = ibanMatch[1].toUpperCase();
+      }
+    }
 
     const rawTextOriginal = buildRawText(record, [
       'Buchungstext',

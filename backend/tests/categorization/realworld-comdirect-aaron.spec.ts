@@ -331,6 +331,40 @@ describe('Real-world comdirect categorization (Aaron\'s sample rows)', () => {
     }
   });
 
+  it('prevents comdirect transfer text from being misclassified as Uber/transport', () => {
+    // Exact purpose text from transaction 414 that was incorrectly classified as transport:rideshare
+    const purpose = 'Übertrag / Überweisung | Empfänger: Aaron McIntoshKto/IBAN: DE32200411770270381700 BLZ/BIC: COBADEHD077  Ref. 5I2C21PU02US856E/42431';
+    
+    const row: ParsedRow = {
+      bookingDate: '2025-09-15',
+      amountCents: -270000,
+      rawText: purpose,
+      counterparty: 'Aaron McIntosh',
+      direction: 'out',
+      accountId: 'account:giro',
+      currency: 'EUR',
+      reference: null,
+      mcc: null,
+      accountIban: null,
+      counterpartyIban: 'DE32200411770270381700', // IBAN extracted from purpose
+      externalId: null,
+      normalizedText: undefined,
+      categorySystem: undefined,
+      raw: {},
+    };
+    
+    const result = categorizeTransaction(row);
+    
+    // Critical: Must NOT be transport/Uber
+    expect(result.category.startsWith('transport')).toBe(false);
+    expect(result.category).not.toBe('transport');
+    expect(result.category).not.toBe('transport:rideshare');
+    
+    // Should be internal transfer category if isInternalTransfer is set
+    // (This test verifies the Uber rule guard, not the full internal transfer detection)
+    // The guard should prevent "Übertrag" from matching Uber
+  });
+
   it('categorizes salary with "Lohn / Gehalt" as income:salary, not transport', () => {
     const row: ParsedRow = {
       bookingDate: '2025-09-30',

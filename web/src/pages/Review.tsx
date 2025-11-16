@@ -3,6 +3,7 @@ import { fetchReviewTransactions, fetchCategories, ReviewTransaction, CategoryMe
 import { AlertCircle } from 'lucide-react';
 import { AppShell } from '../layout/AppShell';
 import { useMemo } from 'react';
+import CategoryControl from '../components/CategoryControl';
 
 interface CategoryIndex {
   [id: string]: CategoryMeta;
@@ -246,9 +247,30 @@ export default function ReviewPage() {
                       )}
                     </td>
                     <td className="px-6 py-4 align-top">
-                      <span className="inline-flex items-center rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-0.5 text-xs text-slate-700 dark:text-slate-300">
-                        {label}
-                      </span>
+                      <CategoryControl
+                        id={tx.id}
+                        fingerprintInput={{
+                          bookingDate: tx.bookingDate,
+                          valueDate: tx.bookingDate,
+                          amountCents: tx.amountCents,
+                          currency: tx.currency,
+                          purpose: tx.rawText,
+                          counterpartName: tx.categoryExplanation?.merchantName ?? null,
+                          accountIban: null,
+                        }}
+                        category={tx.category}
+                        categorySource={tx.categorySource}
+                        rawText={tx.rawText}
+                        merchant={tx.categoryExplanation?.merchantName ?? null}
+                        onApplied={(_resolvedId, next) => {
+                          // Update local state to reflect the change
+                          setTransactions(prev =>
+                            prev.map(t =>
+                              t.id === tx.id ? { ...t, category: next, categorySource: 'user' } : t
+                            )
+                          );
+                        }}
+                      />
                     </td>
                     <td className="px-6 py-4 align-top">
                       <span className="inline-flex items-center rounded-full bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wide text-slate-600 dark:text-slate-300">

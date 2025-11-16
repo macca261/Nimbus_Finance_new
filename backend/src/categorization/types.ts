@@ -3,12 +3,12 @@ import type { CategoryId } from '../types/category';
 import type { Transaction } from '../types/core';
 import type { NimbusCategoryId } from './taxonomy';
 
-export type CategorySource = 'rule' | 'ml' | 'user' | 'fallback' | 'ai' | 'unknown' | 'merchant-db-fuzzy' | 'heuristic:recurring' | 'heuristic:salary' | 'heuristic:rent' | 'heuristic:housing' | 'heuristic:uber-subscription';
+export type CategorySource = 'rule' | 'ml' | 'user' | 'fallback' | 'ai' | 'unknown' | 'system' | 'merchant-db-fuzzy' | 'heuristic:recurring' | 'heuristic:salary' | 'heuristic:rent' | 'heuristic:housing' | 'heuristic:uber-subscription';
 
-export interface CategorizedTransaction extends Omit<ParsedRow, 'categorySystem' | 'category'> {
+export interface CategorizedTransaction extends Omit<ParsedRow, 'categorySystem' | 'category' | 'categorySource'> {
   category?: NimbusCategoryId;
   categoryConfidence?: number;
-  categorySource?: CategorySource;
+  categorySource?: CategorySource; // Our extended CategorySource type (includes 'system')
   categorySystem?: 'nimbus-v1' | string;
   merchant?: string;
   normalizedDescription?: string;

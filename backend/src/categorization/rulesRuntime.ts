@@ -19,6 +19,7 @@
 import type { ParsedRow } from '../parser/types';
 import type { CategoryRule, MerchantPattern } from './types';
 import type { CategoryId } from './categoryRegistry';
+import type { NimbusCategoryId } from './taxonomy';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -109,22 +110,45 @@ export function isUberSubscriptionLike(haystack: string): boolean {
  */
 interface RuleConfig {
   id: string;
-  category: CategoryId;
+  category: CategoryId | NimbusCategoryId; // Can be either legacy CategoryId or NimbusCategoryId
   source?: 'rule' | 'user' | 'ml'; // default 'rule'
   match: (merchantNorm: string, textNorm: string) => boolean;
   defaultConfidence?: number;
 }
 
-// Guard: generic bank transfer (avoid misclassifying as transport)
+/**
+ * Guard: generic bank transfer (avoid misclassifying as transport/Uber).
+ * 
+ * Detects patterns like "Übertrag / Überweisung | Empfänger: ... IBAN: ..."
+ * which are plain bank transfers, NOT Uber rides.
+ * 
+ * Must normalize diacritics first: "Übertrag" → "UBERTRAG" (not "ÜBERTRAG")
+ * to properly detect the pattern and exclude it from Uber matching.
+ */
 function isGenericBankTransfer(text: string): boolean {
-  const t = (text || '').toUpperCase();
-  return (
-    (t.includes('ÜBERTRAG') || t.includes('UEBERTRAG') || t.includes('ÜBERWEISUNG') || t.includes('UEBERWEISUNG')) &&
-    !t.includes('UBER ') && !t.includes(' UBER*') &&
-    !t.includes('BAHN') &&
-    !t.includes('ÖPNV') && !t.includes('OEPNV') &&
-    !t.includes('TICKET')
-  );
+  // Normalize diacritics first: "Übertrag" → "UBERTRAG"
+  const normalized = normalize(text || '');
+  
+  // Check for transfer keywords (after normalization)
+  const hasTransferKeyword = normalized.includes('UBERTRAG') || 
+                             normalized.includes('UBERWEISUNG');
+  
+  if (!hasTransferKeyword) return false;
+  
+  // Exclude real Uber rides (must have "UBER " or "UBER*" as a word, not just "UBERTRAG")
+  // After normalization, "Übertrag" becomes "UBERTRAG" which doesn't contain "UBER " (with space)
+  const hasRealUber = normalized.includes('UBER ') || 
+                       normalized.includes('UBER*') ||
+                       normalized.includes('UBER.COM') ||
+                       normalized.includes('UBER TRIP');
+  
+  // Exclude transport-specific transfers (Bahn, ÖPNV, tickets)
+  const hasTransportSignal = normalized.includes('BAHN') ||
+                             normalized.includes('OPNV') ||
+                             normalized.includes('TICKET');
+  
+  // If it has transfer keywords but no real Uber signals and no transport signals, it's a generic transfer
+  return hasTransferKeyword && !hasRealUber && !hasTransportSignal;
 }
 
 /**
@@ -203,6 +227,38 @@ export const SYSTEM_RULES_CONFIG: RuleConfig[] = [
       t.includes('UMBUCHUNG'),
     defaultConfidence: 0.95,
   },
+  // Uber subscriptions (Uber One, Uber Pass) – must come before Eats and trip rules
+  {
+    id: 'subscriptions:uber',
+    category: 'subscriptions',
+    match: (m, t) => {
+      const merchant = m ?? '';
+      const text = t ?? '';
+      const haystack = (merchant + ' ' + text).toUpperCase();
+      
+      // Must be Uber
+      if (!haystack.includes('UBER')) return false;
+      
+      // Exclude Eats (Eats is food delivery, not subscription)
+      if (haystack.includes('EATS') || haystack.includes('PAYMENTS BV')) return false;
+      
+      // Exclude ride trips (explicit trip indicators)
+      if (haystack.includes('UBER TRIP') || haystack.includes('HELP.UBER.COM') || haystack.includes('HELPUBER.COM')) {
+        return false;
+      }
+      
+      // Subscription signals: explicit keywords OR "Uber BV" in PayPal context with "Ihr Einkauf bei"
+      // "Uber BV" (not "Uber Payments BV") in PayPal transactions with "Ihr Einkauf bei Uber BV" is typically the subscription entity
+      const hasSubscriptionKeywords = isUberSubscriptionLike(haystack);
+      const isUberBVInPayPal = haystack.includes('UBER BV') && 
+                                !haystack.includes('PAYMENTS') && 
+                                haystack.includes('PAYPAL') &&
+                                haystack.includes('IHR EINKAUF BEI UBER BV');
+      
+      return hasSubscriptionKeywords || isUberBVInPayPal;
+    },
+    defaultConfidence: 0.9,
+  },
   // Uber Eats – food delivery (must come before generic Uber rule)
   {
     id: 'dining:uber-eats',
@@ -216,9 +272,11 @@ export const SYSTEM_RULES_CONFIG: RuleConfig[] = [
       if (isUberSubscriptionLike(haystack)) return false;
       
       // Strong Uber Eats signals
+      // "Uber Payments BV" (not just "Uber BV") is the Eats entity
       return haystack.includes('UBER') && 
              (haystack.includes('EATS') || 
-              haystack.includes('HELPEUBER.COM'));
+              haystack.includes('HELPEUBER.COM') ||
+              haystack.includes('UBER PAYMENTS BV'));
     },
     defaultConfidence: 0.95,
   },
@@ -520,8 +578,10 @@ export function applyRules(
 
   for (const rule of SYSTEM_RULES_CONFIG) {
     if (rule.match(merchantNorm, textNorm)) {
+      // Map NimbusCategoryId to CategoryId if needed (will be handled by mapNimbusCategoryToLegacy later)
+      const category = typeof rule.category === 'string' ? (rule.category as CategoryId) : rule.category;
       return {
-        category: rule.category,
+        category: category as CategoryId, // Cast for compatibility - actual mapping happens in engine
         source: rule.source ?? 'rule',
         ruleId: rule.id,
         confidence: rule.defaultConfidence ?? 0.8,

@@ -484,8 +484,10 @@ export function categorizeWithRules(
       ...baseCategorized,
       category: categoryId,
       categorySource: 'system',
-      categoryRuleId: `internal_transfer:${kind ?? 'other'}`,
       categoryConfidence: 0.9,
+      categoryExplanation: {
+        ruleId: `internal_transfer:${kind ?? 'other'}`,
+      },
     };
   };
   const internalOverride = applyInternalTransferOverride();
@@ -689,11 +691,11 @@ export function categorizeWithRules(
             categoryConfidence: Math.max(0.85, fuzzy.score),
             merchant: fuzzy.canonicalName,
             categoryExplanation: {
-              ruleId: `fuzzy:${fuzzy.merchantId}`,
+              ruleId: `fuzzy:${fuzzy.merchantId ?? 'unknown'}`,
               merchantName: fuzzy.canonicalName,
             },
           };
-          base.categoryConfidence = adjustConfidenceForSignMismatch(row, base.category, base.categoryConfidence ?? 0.85);
+          base.categoryConfidence = adjustConfidenceForSignMismatch(row, base.category ?? 'other', base.categoryConfidence ?? 0.85);
           return applySignCategoryGuards(txKind, row, base);
         }
       }
@@ -823,7 +825,7 @@ export function categorizeWithRules(
         ruleId: transferMatch.reason,
       },
     };
-    res.categoryConfidence = adjustConfidenceForSignMismatch(row, res.category, res.categoryConfidence ?? 0.7);
+    res.categoryConfidence = adjustConfidenceForSignMismatch(row, res.category ?? 'other', res.categoryConfidence ?? 0.7);
     return applySignCategoryGuards(txKind, row, res);
   }
 

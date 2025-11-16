@@ -179,12 +179,11 @@ export function mountReviewRoutes(router: Router) {
         // Derive a simple pattern from the groupId (normalized merchant) - use payee pattern
         const rule = insertOverrideRule(
           {
-            id: undefined as any,
+            id: crypto.randomUUID(),
             patternType: 'payee',
             pattern: groupId,
-            categoryId,
+            categoryId: categoryId as any, // categoryId from request body, validated as CategoryId
             applyToPast: Boolean(applyToPast),
-            createdAt: new Date().toISOString(),
           },
           db,
         );

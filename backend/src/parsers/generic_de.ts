@@ -10,6 +10,7 @@ export interface ParsedRow {
   purpose: string;
   counterpartName: string | null;
   accountIban: string | null;
+  counterpartyIban?: string | null;
   rawCode: string | null;
 }
 
@@ -49,6 +50,15 @@ export function parseGermanCSV(buffer: Buffer): ParseResult {
       const cents = parseGermanMoneyToCents(amount);
       if (!booking) continue;
 
+      // Extract IBAN from comdirect purpose text (format: "IBAN: DE32200411770270381700" or "Kto/IBAN: DE32200411770270381700")
+      let counterpartyIban: string | null = null;
+      if (text) {
+        const ibanMatch = text.match(/\b(?:IBAN|Kto\/IBAN|Konto\/IBAN)[:\s]+(DE[0-9]{20})\b/i);
+        if (ibanMatch && ibanMatch[1]) {
+          counterpartyIban = ibanMatch[1].toUpperCase();
+        }
+      }
+
       rows.push({
         bookingDate: normalizeDate(booking),
         valueDate: normalizeDate(valuta || booking),
@@ -57,6 +67,7 @@ export function parseGermanCSV(buffer: Buffer): ParseResult {
         purpose: text,
         counterpartName: null,
         accountIban: null,
+        counterpartyIban: counterpartyIban,
         rawCode: null,
       });
     } else if (shape === 'generic_simple') {

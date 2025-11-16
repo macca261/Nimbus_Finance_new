@@ -393,7 +393,7 @@ export function categorize(input: CategorizeInput): CategorizeResult {
     ...syntheticRow,
     category: categorized.category ?? undefined,
     categoryConfidence: categorized.categoryConfidence,
-    categorySource: categorized.categorySource,
+    categorySource: (categorized.categorySource === 'system' ? 'rule' : categorized.categorySource) as any,
     categorySystem: categorized.categorySystem as 'nimbus-v1' | undefined,
   };
   return toCategorizeResult(resultRow);

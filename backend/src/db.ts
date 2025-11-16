@@ -437,9 +437,18 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
   const purpose = row.purpose ?? '';
   const direction = row.direction ?? (amountCents >= 0 ? 'in' : 'out');
   const counterpartName = row.counterpartName ?? null;
-  const counterpartyIban = row.counterpartyIban ?? null;
+  let counterpartyIban = row.counterpartyIban ?? null;
   const accountIban = row.accountIban ?? null;
   const bankProfile = row.bankProfile ?? null;
+  
+  // Extract IBAN from comdirect purpose text if not already set
+  // Format: "IBAN: DE32200411770270381700" or "Kto/IBAN: DE32200411770270381700"
+  if (!counterpartyIban && purpose && (bankProfile === 'comdirect' || bankProfile === 'de.comdirect.csv.giro')) {
+    const ibanMatch = purpose.match(/\b(?:IBAN|Kto\/IBAN|Konto\/IBAN)[:\s]+(DE[0-9]{20})\b/i);
+    if (ibanMatch && ibanMatch[1]) {
+      counterpartyIban = ibanMatch[1].toUpperCase();
+    }
+  }
   const rawCode = row.rawCode ?? null;
   const raw = row.raw ?? {};
   const source: Source = (row.source as Source) ?? 'manual';

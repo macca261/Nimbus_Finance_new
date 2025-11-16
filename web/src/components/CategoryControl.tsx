@@ -1,16 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getCategoryMeta } from '../lib/categories';
-
-const CATEGORY_CHOICES = [
-  'groceries',
-  'shopping:online',
-  'transport:rideshare',
-  'transport:public',
-  'shopping',
-  'subscriptions:streaming',
-  'housing:rent',
-  'housing:utilities',
-];
+import { getCategoryMeta, CATEGORY_OPTIONS } from '../lib/categories';
 
 type FingerprintInput = {
   bookingDate: string;
@@ -145,10 +134,10 @@ export default function CategoryControl(props: Props) {
           <option value="" disabled>
             — Kategorie wählen —
           </option>
-          {CATEGORY_CHOICES.map(choice => {
-            const meta = getCategoryMeta(choice);
+          {CATEGORY_OPTIONS.map(option => {
+            const meta = getCategoryMeta(option.id);
             return (
-              <option key={choice} value={choice}>
+              <option key={option.id} value={option.id}>
                 {meta.label}
               </option>
             );
