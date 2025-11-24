@@ -25,7 +25,7 @@ const CATEGORIES: Record<string, CategoryMeta> = {
   rent: { label: 'Miete & Wohnen', color: '#7C3AED', background: 'rgba(124,58,237,0.12)' },
   utilities: { label: 'Versorger & Nebenkosten', color: '#22D3EE', background: 'rgba(34,211,238,0.12)' },
   insurance: { label: 'Versicherungen', color: '#9333EA', background: 'rgba(147,51,234,0.12)' },
-  cash_withdrawal: { label: 'Bargeldabhebung', color: '#DB2777', background: 'rgba(219,39,119,0.12)' },
+  cash_withdrawal: { label: 'Bargeldabhebung', color: '#64748B', background: 'rgba(100,116,139,0.12)' },
   transfer_internal: { label: 'Interne Transfers', color: '#0891B2', background: 'rgba(8,145,178,0.12)' },
   p2p_in: { label: 'P2P-Eingänge', color: '#10B981', background: 'rgba(16,185,129,0.12)' },
   p2p_out: { label: 'P2P-Ausgänge', color: '#F97316', background: 'rgba(249,115,22,0.12)' },

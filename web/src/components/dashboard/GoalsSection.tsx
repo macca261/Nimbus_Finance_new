@@ -25,9 +25,11 @@ export const GoalsSection: React.FC<GoalsSectionProps> = ({
 
   return (
     <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-6">
-      <h3 className="mb-4 text-base font-medium text-slate-900 dark:text-slate-100 md:text-lg">
-        Ziele & Fortschritt
-      </h3>
+      <div className="mb-4 space-y-1">
+        <h3 className="text-base font-medium text-slate-900 dark:text-slate-100 md:text-lg">
+          Ziele & Fortschritt
+        </h3>
+      </div>
 
       <div className="space-y-6">
         {/* Notgroschen */}

@@ -28,6 +28,18 @@ function getPassThroughExclusionClause(includePassThrough?: boolean): string {
   if (includePassThrough) return '';
   return 'AND (isPassThrough = 0 OR isPassThrough IS NULL)';
 }
+
+// Helper to build cash withdrawal exclusion clause
+function getCashWithdrawalExclusionClause(includeCashWithdrawals?: boolean): string {
+  if (includeCashWithdrawals) return '';
+  return 'AND (isCashWithdrawal = 0 OR isCashWithdrawal IS NULL)';
+}
+
+// Helper to build reimbursement exclusion clause
+function getReimbursementExclusionClause(includeReimbursements?: boolean): string {
+  if (includeReimbursements) return '';
+  return 'AND (isReimbursement = 0 OR isReimbursement IS NULL)';
+}
 // GET /api/summary/balance -> { data: { balanceCents, currency } }
 summary.get('/balance', (req, res) => {
   try {
@@ -35,10 +47,13 @@ summary.get('/balance', (req, res) => {
     const includeRefunds = (req.query as any)?.includeRefunds === 'true';
     const includeInternalTransfers = (req.query as any)?.includeInternalTransfers === 'true';
     const includePassThrough = (req.query as any)?.includePassThrough === 'true';
+    const includeCashWithdrawals = (req.query as any)?.includeCashWithdrawals === 'true';
     const refundClause = getRefundExclusionClause(includeRefunds);
     const internalTransferClause = getInternalTransferExclusionClause(includeInternalTransfers);
     const passThroughClause = getPassThroughExclusionClause(includePassThrough);
-    const totalRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions WHERE 1=1 ${refundClause} ${internalTransferClause} ${passThroughClause}`).get() as { sum?: number };
+    const cashWithdrawalClause = getCashWithdrawalExclusionClause(includeCashWithdrawals);
+    const reimbursementClause = getReimbursementExclusionClause();
+    const totalRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions WHERE 1=1 ${refundClause} ${internalTransferClause} ${passThroughClause} ${cashWithdrawalClause} ${reimbursementClause}`).get() as { sum?: number };
     const payload: { balanceCents: number; currency: string; month?: string; monthNetCents?: number } = {
       balanceCents: totalRow?.sum ?? 0,
       currency: 'EUR',
@@ -46,7 +61,7 @@ summary.get('/balance', (req, res) => {
     const qMonth = (req.query as any)?.month as string | undefined;
     if (qMonth) {
       const { start, end, month } = getMonthRange(qMonth);
-      const monthRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions WHERE bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause}`).get(start, end) as { sum?: number };
+      const monthRow = db.prepare(`SELECT COALESCE(SUM(amountCents),0) AS sum FROM transactions WHERE bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${cashWithdrawalClause}`).get(start, end) as { sum?: number };
       payload.month = month;
       payload.monthNetCents = monthRow?.sum ?? 0;
     }
@@ -67,18 +82,21 @@ summary.get('/month', (req, res) => {
     const includeRefunds = (req.query as any)?.includeRefunds === 'true';
     const includeInternalTransfers = (req.query as any)?.includeInternalTransfers === 'true';
     const includePassThrough = (req.query as any)?.includePassThrough === 'true';
+    const includeCashWithdrawals = (req.query as any)?.includeCashWithdrawals === 'true';
     const refundClause = getRefundExclusionClause(includeRefunds);
     const internalTransferClause = getInternalTransferExclusionClause(includeInternalTransfers);
     const passThroughClause = getPassThroughExclusionClause(includePassThrough);
+    const cashWithdrawalClause = getCashWithdrawalExclusionClause(includeCashWithdrawals);
+    const reimbursementClause = getReimbursementExclusionClause();
     const inc = db.prepare(`
       SELECT COALESCE(SUM(amountCents),0) AS sum
       FROM transactions
-      WHERE amountCents > 0 AND bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause}
+      WHERE amountCents > 0 AND bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause} ${cashWithdrawalClause} ${reimbursementClause}
     `).get(start, end) as { sum?: number };
     const exp = db.prepare(`
       SELECT COALESCE(SUM(amountCents),0) AS sum
       FROM transactions
-      WHERE amountCents < 0 AND bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause}
+      WHERE amountCents < 0 AND bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause} ${cashWithdrawalClause} ${reimbursementClause}
     `).get(start, end) as { sum?: number };
     
     // Calculate reimbursement offsets for this month
@@ -120,18 +138,21 @@ summary.get('/categories', (req, res) => {
     const includeRefunds = (req.query as any)?.includeRefunds === 'true';
     const includeInternalTransfers = (req.query as any)?.includeInternalTransfers === 'true';
     const includePassThrough = (req.query as any)?.includePassThrough === 'true';
+    const includeCashWithdrawals = (req.query as any)?.includeCashWithdrawals === 'true';
     const refundClause = getRefundExclusionClause(includeRefunds);
     const internalTransferClause = getInternalTransferExclusionClause(includeInternalTransfers);
     const passThroughClause = getPassThroughExclusionClause(includePassThrough);
+    const cashWithdrawalClause = getCashWithdrawalExclusionClause(includeCashWithdrawals);
+    const reimbursementClause = getReimbursementExclusionClause();
     const hasMonth = Boolean(monthParam);
     const params: unknown[] = [];
     let whereClause = '';
     if (hasMonth) {
       const { start, end } = getMonthRange(monthParam);
-      whereClause = `WHERE bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause}`;
+      whereClause = `WHERE bookingDate BETWEEN ? AND ? ${refundClause} ${internalTransferClause} ${passThroughClause} ${cashWithdrawalClause} ${reimbursementClause}`;
       params.push(start, end);
     } else {
-      whereClause = `WHERE 1=1 ${refundClause} ${internalTransferClause} ${passThroughClause}`;
+      whereClause = `WHERE 1=1 ${refundClause} ${internalTransferClause} ${passThroughClause} ${cashWithdrawalClause} ${reimbursementClause}`;
     }
     const sql = `
       SELECT
@@ -214,6 +235,8 @@ summary.get('/monthly-6', (req, res) => {
                  AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)
                  AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
                  AND (isPassThrough = 0 OR isPassThrough IS NULL)
+                 AND (isCashWithdrawal = 0 OR isCashWithdrawal IS NULL)
+                 AND (isReimbursement = 0 OR isReimbursement IS NULL)
              ),0) AS inc,
              ABS(COALESCE((
                SELECT SUM(amountCents) FROM transactions
@@ -221,6 +244,8 @@ summary.get('/monthly-6', (req, res) => {
                  AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)
                  AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
                  AND (isPassThrough = 0 OR isPassThrough IS NULL)
+                 AND (isCashWithdrawal = 0 OR isCashWithdrawal IS NULL)
+                 AND (isReimbursement = 0 OR isReimbursement IS NULL)
              ),0)) AS exp
       FROM months m
       ORDER BY m.ym
@@ -251,12 +276,16 @@ summary.get('/monthly', (req, res) => {
                WHERE amountCents > 0 AND strftime('%Y-%m', bookingDate) = m.ym
                  AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)
                  AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+                 AND (isCashWithdrawal = 0 OR isCashWithdrawal IS NULL)
+                 AND (isReimbursement = 0 OR isReimbursement IS NULL)
              ),0) AS inc,
              ABS(COALESCE((
                SELECT SUM(amountCents) FROM transactions
                WHERE amountCents < 0 AND strftime('%Y-%m', bookingDate) = m.ym
                  AND (isRefund = 0 OR isRefund IS NULL) AND (isRefunded = 0 OR isRefunded IS NULL)
                  AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+                 AND (isCashWithdrawal = 0 OR isCashWithdrawal IS NULL)
+                 AND (isReimbursement = 0 OR isReimbursement IS NULL)
              ),0)) AS exp
       FROM months m
       ORDER BY m.ym
@@ -264,6 +293,80 @@ summary.get('/monthly', (req, res) => {
     const data = (rows ?? []).map(r => ({ month: r.ym, incomeCents: Math.trunc(r.inc ?? 0), expenseCents: Math.trunc(r.exp ?? 0) }));
     res.json({ data });
   } catch {
+    res.json({ data: [] });
+  }
+});
+
+// GET /api/summary/monthly-6-income-expense -> Last 6 months income/expense
+summary.get('/monthly-6-income-expense', (req, res) => {
+  try {
+    const db = (req.app as any).locals.db;
+    const now = new Date();
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = now.getUTCMonth(); // 0-indexed
+    
+    // Build list of last 6 months (including current month)
+    const months: Array<{ year: number; month: number; label: string }> = [];
+    for (let i = 0; i < 6; i++) {
+      const date = new Date(Date.UTC(currentYear, currentMonth - i, 1));
+      const year = date.getUTCFullYear();
+      const month = date.getUTCMonth() + 1; // 1-indexed
+      const label = `${year}-${String(month).padStart(2, '0')}`;
+      months.push({ year, month, label });
+    }
+    
+    // Reverse to get ascending order (oldest first)
+    months.reverse();
+    
+    // Use exclusion helpers (default: exclude all)
+    const refundClause = getRefundExclusionClause(false);
+    const internalTransferClause = getInternalTransferExclusionClause(false);
+    const passThroughClause = getPassThroughExclusionClause(false);
+    const cashWithdrawalClause = getCashWithdrawalExclusionClause(false);
+    const reimbursementClause = getReimbursementExclusionClause();
+    
+    const results = months.map(({ label }) => {
+      // Get start and end dates for this month using getMonthRange for consistency
+      const { start, end } = getMonthRange(label);
+      
+      // Calculate income (positive amounts)
+      const incomeRow = db.prepare(`
+        SELECT COALESCE(SUM(amountCents), 0) AS sum
+        FROM transactions
+        WHERE amountCents > 0 
+          AND bookingDate BETWEEN ? AND ?
+          ${refundClause}
+          ${internalTransferClause}
+          ${passThroughClause}
+          ${cashWithdrawalClause}
+          ${reimbursementClause}
+      `).get(start, end) as { sum?: number };
+      
+      // Calculate expenses (negative amounts, absolute value)
+      const expenseRow = db.prepare(`
+        SELECT COALESCE(SUM(amountCents), 0) AS sum
+        FROM transactions
+        WHERE amountCents < 0 
+          AND bookingDate BETWEEN ? AND ?
+          ${refundClause}
+          ${internalTransferClause}
+          ${passThroughClause}
+          ${cashWithdrawalClause}
+          ${reimbursementClause}
+      `).get(start, end) as { sum?: number };
+      
+      const totalIncomeCents = Math.trunc(incomeRow?.sum ?? 0);
+      const totalExpenseCents = Math.abs(Math.trunc(expenseRow?.sum ?? 0));
+      
+      return {
+        month: label,
+        totalIncomeCents,
+        totalExpenseCents,
+      };
+    });
+    
+    res.json({ data: results });
+  } catch (e) {
     res.json({ data: [] });
   }
 });
@@ -345,6 +448,50 @@ summary.get('/internal-transfers', (req, res) => {
         otherInCents: 0,
       },
     });
+  }
+});
+
+// GET /api/summary/month -> { summary: MonthSummary }
+summary.get('/month', async (req, res) => {
+  try {
+    const db = (req.app as any).locals.db;
+    if (!db) {
+      return res.status(500).json({ error: 'Database not available' });
+    }
+
+    const monthParam = (req.query as any).month as string | undefined;
+    const { getMonthSummary } = await import('../services/monthSummaryService');
+    const summary = await getMonthSummary(db, monthParam);
+
+    res.json({ summary });
+  } catch (error: any) {
+    console.error('[summary/month] Error:', error?.message || error);
+    res.status(500).json({ error: 'Failed to get month summary' });
+  }
+});
+
+// GET /api/summary/month-narrative -> { summary: MonthSummary, narrative: MonthNarrative }
+summary.get('/month-narrative', async (req, res) => {
+  try {
+    const db = (req.app as any).locals.db;
+    if (!db) {
+      return res.status(500).json({ error: 'Database not available' });
+    }
+
+    const monthParam = (req.query as any).month as string | undefined;
+    const { getMonthSummary } = await import('../services/monthSummaryService');
+    const { getMonthNarrative } = await import('../services/aiSummaryService');
+
+    // Get numeric summary
+    const summary = await getMonthSummary(db, monthParam);
+
+    // Get AI narrative (falls back to template if AI is disabled)
+    const narrative = await getMonthNarrative(summary, { locale: 'de' });
+
+    res.json({ summary, narrative });
+  } catch (error: any) {
+    console.error('[summary/month-narrative] Error:', error?.message || error);
+    res.status(500).json({ error: 'Failed to get month narrative' });
   }
 });
 

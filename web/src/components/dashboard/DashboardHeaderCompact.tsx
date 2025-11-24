@@ -44,11 +44,11 @@ export const DashboardHeaderCompact: React.FC<DashboardHeaderCompactProps> = ({
 
   return (
     <div className="grid gap-6 md:grid-cols-12">
-      {/* Left: Greeting */}
+      {/* Left: Period summary (greeting removed, now in DashboardHero) */}
       <div className="md:col-span-6">
-        <h1 className="text-2xl md:text-3xl font-semibold text-slate-900 dark:text-slate-100">
-          {greeting}
-        </h1>
+        <div className="text-lg md:text-xl font-medium text-slate-700 dark:text-slate-300">
+          Überblick der letzten 30 Tage
+        </div>
       </div>
 
       {/* Right: Filters & Meta */}
@@ -71,7 +71,7 @@ export const DashboardHeaderCompact: React.FC<DashboardHeaderCompactProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+              className="inline-flex items-center gap-2 rounded-xl bg-nf-primary px-4 py-2 text-sm font-semibold text-white transition-all duration-200 hover:bg-nf-primary hover:shadow-glow-primary focus:outline-none focus:ring-2 focus:ring-nf-primary focus:ring-offset-2"
               onClick={onUploadClick}
             >
               <UploadCloud className="h-4 w-4" aria-hidden="true" />
@@ -114,7 +114,7 @@ type SelectProps = {
 
 function Select({ label, icon, value, onChange, options }: SelectProps) {
   return (
-    <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 shadow-sm transition focus-within:border-indigo-300 focus-within:ring-1 focus-within:ring-indigo-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:focus-within:ring-indigo-500/40">
+    <label className="flex items-center gap-2 rounded-xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm px-3 py-2 text-sm text-nf-text-main shadow-sm transition-all duration-200 focus-within:border-nf-primary/40 focus-within:ring-1 focus-within:ring-nf-primary/20">
       <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
         {icon}
       </span>

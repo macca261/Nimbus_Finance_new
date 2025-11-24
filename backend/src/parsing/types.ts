@@ -32,6 +32,7 @@ export interface ParsedRow {
   reimbursementGroupId?: string | null;
   reimbursementShareRatio?: number | null;
   bankReferenceId?: string | null;
+  isCashWithdrawal?: boolean;
 }
 
 export interface ParseCandidate {

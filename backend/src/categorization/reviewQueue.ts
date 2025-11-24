@@ -1,5 +1,6 @@
 import type { Database } from '../db';
 import type { CategorizedTransaction } from './types';
+import { computeTransactionDisplayName } from '../lib/transactions/displayName';
 
 export interface ReviewTransaction {
   id: string;
@@ -15,6 +16,7 @@ export interface ReviewTransaction {
     merchantName?: string;
     matchedText?: string;
   } | null;
+  displayName: string;
   rawText: string;
 }
 
@@ -53,8 +55,13 @@ export async function getTransactionsForReview(
     category_source: string | null;
     category_confidence: number | null;
     category_explanation_json?: string | null;
-    raw_text: string;
+    purpose: string | null;
+    counterpart_name: string | null;
+    payee: string | null;
+    memo: string | null;
     created_at: string;
+    isInternalTransfer: number | null;
+    internalTransferKind: string | null;
   };
 
   const rows = db
@@ -70,12 +77,20 @@ export async function getTransactionsForReview(
         category_source,
         category_confidence,
         category_explanation AS category_explanation_json,
-        purpose AS raw_text,
-        createdAt AS created_at
+        purpose,
+        counterpartName AS counterpart_name,
+        payee,
+        memo,
+        createdAt AS created_at,
+        isInternalTransfer,
+        internalTransferKind
       FROM transactions
       WHERE
+        -- Exclude internal transfers (including payment provider funding)
+        -- AI categorisation should never create suggestions for internal transfers
+        (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
         -- suspicious or low-quality categories
-        (
+        AND (
           (category IS NULL OR category = 'other')
           OR (category_source IS NULL OR category_source = 'unknown' OR category_source = 'fallback')
           OR (category_confidence IS NULL OR (category_confidence IS NOT NULL AND category_confidence <= ?))
@@ -109,6 +124,7 @@ export async function getTransactionsForReview(
       }
     }
 
+    const rawText = row.memo || row.purpose || '';
     return {
       id: String(row.id),
       bookingDate: row.booking_date,
@@ -119,7 +135,15 @@ export async function getTransactionsForReview(
       categorySource: row.category_source,
       categoryConfidence: row.category_confidence,
       categoryExplanation: explanation,
-      rawText: row.raw_text,
+      displayName: computeTransactionDisplayName({
+        counterpartName: row.counterpart_name,
+        payee: row.payee,
+        purpose: row.purpose,
+        memo: row.memo,
+      }),
+      rawText,
+      isInternalTransfer: Boolean(row.isInternalTransfer),
+      internalTransferKind: (row.internalTransferKind as 'savings' | 'wallet' | 'other' | 'payment_provider_funding' | null) ?? null,
     };
   });
 }

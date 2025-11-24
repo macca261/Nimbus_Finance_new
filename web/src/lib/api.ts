@@ -63,6 +63,7 @@ export const apiSummary = {
   },
   months:  (months = 6) => getJSON<{ data:{month:string; incomeCents:number; expenseCents:number}[] }>(`/summary/monthly?months=${months}`).then(j => j.data),
   months6: () => getJSON<{ baseMonth: string|null; series:{label:string; incomeCents:number; expenseCents:number}[] }>(`/summary/monthly-6`),
+  monthlyIncomeExpense: () => getJSON<{ data:{month:string; totalIncomeCents:number; totalExpenseCents:number}[] }>(`/summary/monthly-6-income-expense`).then(j => j.data),
 };
 
 export async function getTransactions(params: { limit?: number } = {}) {

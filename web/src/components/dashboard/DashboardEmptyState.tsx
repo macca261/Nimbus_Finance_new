@@ -8,8 +8,13 @@ type DashboardEmptyStateProps = {
 
 export const DashboardEmptyState: React.FC<DashboardEmptyStateProps> = ({ onImported, onNavigateToImports }) => {
   return (
-    <section className="flex flex-col gap-6 rounded-3xl border border-dashed border-slate-300/80 bg-white/80 px-6 py-10 text-center shadow-sm shadow-slate-500/10 dark:border-slate-700/60 dark:bg-slate-900/70 sm:px-12 sm:py-16">
-      <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-50">Starte mit einem Kontoauszug</h1>
+    <section className="flex flex-col gap-6 rounded-3xl border border-slate-100/80 bg-white px-6 py-10 text-center shadow-sm shadow-slate-900/5 dark:border-slate-700/60 dark:bg-slate-900/70 sm:px-12 sm:py-16">
+      <div className="flex items-center justify-center gap-3">
+        <h1 className="text-3xl font-semibold text-slate-900 dark:text-slate-50">Starte mit einem Kontoauszug</h1>
+        <span className="inline-flex items-center rounded-full bg-sky-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+          Schritt 1 von 3
+        </span>
+      </div>
       <p className="mx-auto max-w-2xl text-sm text-slate-500 dark:text-slate-400">
         Lade einen CSV-Export von deiner Bank oder PayPal hoch. Wir erkennen das Profil, normalisieren die Daten und
         geben dir innerhalb von Sekunden saubere Finanzinformationen.

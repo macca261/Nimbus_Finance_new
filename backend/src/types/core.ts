@@ -38,6 +38,8 @@ export interface Transaction {
   categorizationReasonText?: string;
   isPassThrough?: boolean;
   passThroughGroupId?: string | null;
+  isCashWithdrawal?: boolean;
+  ignoreForReimbursement?: boolean;
 }
 
 export interface TransferLink {
@@ -67,4 +69,12 @@ export interface UserOverrideRule {
   categoryId: CategoryId;
   applyToPast: boolean;
   createdAt: string;
+}
+
+export interface ReimbursementAllocation {
+  id: number;
+  groupId: string;
+  inflowTransactionId: string;
+  expenseTransactionId: string;
+  allocatedAmountCents: number;
 }

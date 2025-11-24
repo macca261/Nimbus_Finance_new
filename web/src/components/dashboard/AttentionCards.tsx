@@ -93,12 +93,12 @@ export const AttentionCards: React.FC<AttentionCardsProps> = ({
             <p className="mb-4 text-xs text-amber-700 dark:text-amber-300">
               Viele dieser Buchungen könnten eine genauere Kategorie bekommen.
             </p>
-            <button
-              onClick={() => onNavigateToTransactions({ category: 'other' })}
-              className="w-full rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 dark:bg-amber-500 dark:hover:bg-amber-600"
+            <a
+              href="/review/sonstiges"
+              className="block w-full rounded-lg bg-amber-600 px-4 py-2 text-center text-sm font-medium text-white transition hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 dark:bg-amber-500 dark:hover:bg-amber-600"
             >
               Sonstiges bereinigen
-            </button>
+            </a>
           </div>
         </div>
       )}

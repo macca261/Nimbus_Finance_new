@@ -9,9 +9,13 @@ import type { NormalizedTransaction } from './types/transactions';
 import type { CategoryId } from './types/category';
 import { findMatchingOverride } from './overrides/userOverrides';
 import { findRefundPair, linkRefundPair } from './categorization/refundMatcher';
-import { findInternalTransferPair, applyInternalTransferFlags, classifySingleSidedSavingsTransfer } from './categorization/internalTransferMatcher';
-import { findReimbursementMatchForIncome, applyReimbursementFlags } from './categorization/reimbursementMatcher';
+import { findInternalTransferPair, applyInternalTransferFlags, classifySingleSidedSavingsTransfer, classifySingleSidedWalletTransfer } from './categorization/internalTransferMatcher';
+import { detectInternalTransfer } from './services/internalTransferService';
+import { detectPaymentProviderFunding } from './services/internalTransferService';
+import * as accountsService from './services/accountsService';
+import { findReimbursementMatchForIncome, applyReimbursementFlags, classifyReimbursementLike } from './categorization/reimbursementMatcher';
 import { buildCategorizationExplanation } from './categorization/explanation';
+import { isCashWithdrawalLike } from './categorization/cashMatcher';
 
 export type CanonicalRow = {
   publicId?: string;
@@ -49,7 +53,7 @@ export type CanonicalRow = {
   refundGroupId?: string | null
   isInternalTransfer?: boolean
   internalTransferDirection?: 'out' | 'in' | null
-  internalTransferKind?: 'savings' | 'wallet' | 'other' | null
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | 'payment_provider_funding' | null
   internalTransferGroupId?: string | null
   isReimbursement?: boolean
   reimbursementRole?: 'payer' | 'receiver' | null
@@ -58,6 +62,8 @@ export type CanonicalRow = {
   bankReferenceId?: string | null
   isPassThrough?: boolean
   passThroughGroupId?: string | null
+  isCashWithdrawal?: boolean
+  ignoreForReimbursement?: boolean
 }
 
 const ENV_DB = (process.env.NIMBUS_DB_PATH || '').trim()
@@ -166,6 +172,17 @@ export function ensureSchema(db: Database) {
   // Pass-through pairing support
   ensureColumn('isPassThrough', "ALTER TABLE transactions ADD COLUMN isPassThrough INTEGER DEFAULT 0");
   ensureColumn('passThroughGroupId', "ALTER TABLE transactions ADD COLUMN passThroughGroupId TEXT");
+  // Cash withdrawal detection
+  ensureColumn('isCashWithdrawal', "ALTER TABLE transactions ADD COLUMN isCashWithdrawal INTEGER DEFAULT 0", () => {
+    console.log('[migrate] added column transactions.isCashWithdrawal');
+  });
+  // Paired transaction ID for payment provider funding (architectural purity: separate from generic fromAccountId/toAccountId)
+  ensureColumn('pairedTransactionId', "ALTER TABLE transactions ADD COLUMN pairedTransactionId TEXT", () => {
+    console.log('[migrate] added column transactions.pairedTransactionId');
+  });
+  ensureColumn('ignoreForReimbursement', "ALTER TABLE transactions ADD COLUMN ignoreForReimbursement INTEGER DEFAULT 0", () => {
+    console.log('[migrate] added column transactions.ignoreForReimbursement');
+  });
 
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS ux_tx_dedup
@@ -188,6 +205,20 @@ export function ensureSchema(db: Database) {
   `);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_transfer_links_pair ON transfer_links(fromTxId, toTxId);`);
 
+  // Reimbursement allocations table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reimbursement_allocations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      groupId TEXT NOT NULL,
+      inflowTransactionId TEXT NOT NULL,
+      expenseTransactionId TEXT NOT NULL,
+      allocatedAmountCents INTEGER NOT NULL,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE (groupId, inflowTransactionId, expenseTransactionId)
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_reimbursement_allocations_groupId ON reimbursement_allocations(groupId);`);
+
   // Accounts table (for metadata like role)
   db.exec(`
     CREATE TABLE IF NOT EXISTS accounts (
@@ -198,14 +229,66 @@ export function ensureSchema(db: Database) {
       createdAt TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
     );
   `);
-  // Ensure role column exists (if table predated role)
+  // Ensure all columns exist (migration-friendly)
+  // This must run every time to handle schema evolution
   try {
     const accCols = db.prepare(`PRAGMA table_info('accounts')`).all() as { name: string }[];
-    const hasRole = accCols.some(c => c.name === 'role');
-    if (!hasRole) {
-      db.exec(`ALTER TABLE accounts ADD COLUMN role TEXT DEFAULT 'spending'`);
+    const colNames = new Set(accCols.map(c => c.name));
+    
+    // Migrate role to type (backward compatibility) - only if role exists but type doesn't
+    if (colNames.has('role') && !colNames.has('type')) {
+      try {
+        db.exec(`ALTER TABLE accounts ADD COLUMN type TEXT`);
+        db.exec(`UPDATE accounts SET type = CASE 
+          WHEN role = 'savings' THEN 'SAVINGS'
+          WHEN role = 'wallet' THEN 'CASH'
+          ELSE 'CHECKING'
+        END WHERE type IS NULL`);
+      } catch (err) {
+        console.warn('[migrate] role->type migration failed:', (err as Error)?.message);
+      }
     }
-  } catch {}
+    
+    // Add new columns (idempotent - will fail silently if column already exists)
+    const addColumn = (name: string, sql: string) => {
+      if (!colNames.has(name)) {
+        try {
+          db.exec(sql);
+          colNames.add(name); // Update set for subsequent checks
+        } catch (err) {
+          console.warn(`[migrate] failed to add column accounts.${name}:`, (err as Error)?.message);
+        }
+      }
+    };
+    
+    addColumn('type', `ALTER TABLE accounts ADD COLUMN type TEXT DEFAULT 'CHECKING'`);
+    addColumn('accountNumber', `ALTER TABLE accounts ADD COLUMN accountNumber TEXT`);
+    addColumn('isPrimary', `ALTER TABLE accounts ADD COLUMN isPrimary INTEGER DEFAULT 0`);
+    addColumn('isArchived', `ALTER TABLE accounts ADD COLUMN isArchived INTEGER DEFAULT 0`);
+    addColumn('userId', `ALTER TABLE accounts ADD COLUMN userId TEXT DEFAULT 'default'`);
+    // SQLite doesn't allow non-constant defaults in ALTER TABLE, so add without default and backfill
+    if (!colNames.has('updatedAt')) {
+      try {
+        db.exec(`ALTER TABLE accounts ADD COLUMN updatedAt TEXT`);
+        // Backfill with current timestamp for existing rows
+        db.exec(`UPDATE accounts SET updatedAt = COALESCE(createdAt, datetime('now')) WHERE updatedAt IS NULL`);
+      } catch (err) {
+        console.warn(`[migrate] failed to add column accounts.updatedAt:`, (err as Error)?.message);
+      }
+    } else {
+      // Backfill any NULL values
+      try {
+        db.exec(`UPDATE accounts SET updatedAt = COALESCE(createdAt, datetime('now')) WHERE updatedAt IS NULL`);
+      } catch (err) {
+        // Ignore - might fail if no rows exist
+      }
+    }
+    
+    // Ensure role column exists (for backward compatibility)
+    addColumn('role', `ALTER TABLE accounts ADD COLUMN role TEXT DEFAULT 'spending'`);
+  } catch (err) {
+    console.warn('[migrate] accounts table migration error:', (err as Error)?.message || err);
+  }
   // Seed accounts from existing transactions (idempotent)
   try {
     seedAccountsFromExistingTransactions(db);
@@ -288,6 +371,46 @@ export function ensureSchema(db: Database) {
     );
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tx_feedback_txId ON tx_category_feedback(txId);`);
+
+  // Quest tables (Quest Engine v0)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS quest_definitions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      targetValue REAL NOT NULL,
+      unit TEXT NOT NULL,
+      isActive INTEGER NOT NULL DEFAULT 1,
+      configJson TEXT,
+      createdAt TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+      updatedAt TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_quest_definitions_isActive ON quest_definitions(isActive);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_quest_definitions_kind ON quest_definitions(kind);`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_quest_states (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL DEFAULT 'default',
+      questId TEXT NOT NULL,
+      status TEXT NOT NULL,
+      currentValue REAL NOT NULL DEFAULT 0,
+      targetValue REAL NOT NULL,
+      progressPercent REAL NOT NULL DEFAULT 0,
+      startedAt TEXT,
+      completedAt TEXT,
+      metadataJson TEXT,
+      createdAt TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+      updatedAt TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+      FOREIGN KEY (questId) REFERENCES quest_definitions(id) ON DELETE CASCADE
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_user_quest_states_userId ON user_quest_states(userId);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_user_quest_states_questId ON user_quest_states(questId);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_user_quest_states_status ON user_quest_states(status);`);
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_user_quest_states_user_quest ON user_quest_states(userId, questId);`);
 }
 
 export function initDb(conn: Database): void {
@@ -415,7 +538,7 @@ export type NormalizedCanonicalRow = {
   refundGroupId?: string | null;
   isInternalTransfer?: boolean;
   internalTransferDirection?: 'out' | 'in' | null;
-  internalTransferKind?: 'savings' | 'wallet' | 'other' | null;
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | 'payment_provider_funding' | null;
   internalTransferGroupId?: string | null;
   isReimbursement?: boolean;
   reimbursementRole?: 'payer' | 'receiver' | null;
@@ -424,6 +547,7 @@ export type NormalizedCanonicalRow = {
   bankReferenceId?: string | null;
   isPassThrough?: boolean;
   passThroughGroupId?: string | null;
+  isCashWithdrawal?: boolean;
   createdAt: string;
   transactionPayload: Transaction;
   id?: number; // Database ID, added when reading from DB
@@ -475,6 +599,7 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
   const bankReferenceId = row.bankReferenceId ?? null;
   const isPassThrough = Boolean(row.isPassThrough);
   const passThroughGroupId = row.passThroughGroupId ?? null;
+  const isCashWithdrawal = Boolean(row.isCashWithdrawal) || isCashWithdrawalLike(purpose, memo, bankProfile);
   const createdAt = new Date().toISOString();
 
   const fingerprint = txFingerprint({
@@ -522,6 +647,7 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
     bankReferenceId,
     isPassThrough,
     passThroughGroupId,
+    isCashWithdrawal,
   };
 
   return {
@@ -567,6 +693,9 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
     reimbursementGroupId,
     reimbursementShareRatio,
     bankReferenceId,
+    isPassThrough,
+    passThroughGroupId,
+    isCashWithdrawal,
     createdAt,
     transactionPayload,
     importBatchId: row.importBatchId ?? null,
@@ -620,7 +749,10 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       reimbursementRole,
       reimbursementGroupId,
       reimbursementShareRatio,
-      bankReferenceId
+      bankReferenceId,
+      isPassThrough,
+      passThroughGroupId,
+      isCashWithdrawal
     ) VALUES (
       @publicId,
       @bookingDate,
@@ -665,7 +797,10 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       @reimbursementRole,
       @reimbursementGroupId,
       @reimbursementShareRatio,
-      @bankReferenceId
+      @bankReferenceId,
+      @isPassThrough,
+      @passThroughGroupId,
+      @isCashWithdrawal
     )
   `);
 
@@ -841,10 +976,11 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       }
     }
     
-    // Now try internal transfer matching for each row (after refund matching, BEFORE categorization)
-    // This must happen before categorization so the engine can see isInternalTransfer flags
-    // For internal transfers, we need to check ALL accounts, not just the ones in the current batch
-    // because internal transfers are between different accounts
+    // Internal transfer detection runs here (after refund matching, BEFORE categorization).
+    // This ensures the categorization engine sees isInternalTransfer flags and applies appropriate categories.
+    // Detection uses account identifiers (IBAN, account number) for reliable matching between user's own accounts.
+    // IMPORTANT: This section must remain properly structured with all braces balanced - the detection logic
+    // runs within the transaction callback and any syntax errors here will break the entire insertTransactions function.
     // Fetch recent transactions for internal transfer matching (last 30 days, smaller window)
     const internalTransferCutoffDate = new Date();
     internalTransferCutoffDate.setDate(internalTransferCutoffDate.getDate() - 30);
@@ -974,9 +1110,51 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         if (ar?.iban) roleByIban[String(ar.iban)] = (ar.role || 'spending') as any;
       }
 
-      const transferMatch = findInternalTransferPair(base, allCandidates, { daysWindow: 3, accountRoleById: roleById, accountRoleByIban: roleByIban });
-      if (transferMatch) {
-        const flagged = applyInternalTransferFlags(transferMatch);
+      // First, try the new account-based detection (higher priority, more reliable)
+      // Wrap in try-catch to prevent internal transfer detection errors from crashing the import
+      let accountBasedDetection: ReturnType<typeof detectInternalTransfer> | null = null;
+      try {
+        accountBasedDetection = detectInternalTransfer(base, conn, allCandidates);
+      } catch (detectionError: any) {
+        // Log but don't fail - treat transaction as normal if detection fails
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[internalTransferService] detection error for transaction', {
+            publicId: base.publicId,
+            accountId: base.accountId,
+            error: detectionError?.message || String(detectionError),
+          });
+        }
+        // Continue with normal transaction processing
+      }
+      
+      if (accountBasedDetection?.isInternalTransfer && accountBasedDetection.confidence >= 0.75) {
+        // Use account-based detection result
+        base.isInternalTransfer = true;
+        base.internalTransferDirection = accountBasedDetection.fromAccountId === base.accountId ? 'out' : 'in';
+        base.internalTransferKind = accountBasedDetection.kind || 'other';
+        // Generate groupId if we have both accounts
+        if (accountBasedDetection.fromAccountId && accountBasedDetection.toAccountId) {
+          const ids = [accountBasedDetection.fromAccountId, accountBasedDetection.toAccountId].sort();
+          base.internalTransferGroupId = `int_${ids[0]}_${ids[1]}`;
+        } else {
+          base.internalTransferGroupId = `int_single_${base.publicId}`;
+        }
+        
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[internalTransferService] detected via account matching', {
+            amountCents: base.amountCents,
+            fromAccountId: accountBasedDetection.fromAccountId,
+            toAccountId: accountBasedDetection.toAccountId,
+            kind: accountBasedDetection.kind,
+            confidence: accountBasedDetection.confidence,
+            reason: accountBasedDetection.reason,
+          });
+        }
+      } else {
+        // Fall back to existing pairing logic
+        const transferMatch = findInternalTransferPair(base, allCandidates, { daysWindow: 3, accountRoleById: roleById, accountRoleByIban: roleByIban });
+        if (transferMatch) {
+          const flagged = applyInternalTransferFlags(transferMatch);
         
         // Determine which side of the pair is the new row
         const isNewRowA = base.publicId === flagged.a.publicId;
@@ -1015,7 +1193,11 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
             });
           }
         }
-      } else {
+        }
+      }
+      
+      // If still not detected, try single-sided detection
+      if (!base.isInternalTransfer) {
         // Single-sided internal transfer detection (outgoing to any account in accounts table)
         const single = classifySingleSidedSavingsTransfer(base, { accountRoleById: roleById, accountRoleByIban: roleByIban });
         if (single && single.isInternalTransfer) {
@@ -1040,6 +1222,161 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
               groupId: base.internalTransferGroupId,
             });
           }
+        } else {
+          // Try Wise wallet top-up detection (single-sided, no IBAN needed)
+          const wallet = classifySingleSidedWalletTransfer(base, { accountRoleById: roleById, accountRoleByIban: roleByIban });
+          if (wallet && wallet.isInternalTransfer) {
+            base.isInternalTransfer = true;
+            base.internalTransferDirection = wallet.internalTransferDirection;
+            base.internalTransferKind = wallet.internalTransferKind;
+            base.internalTransferGroupId = wallet.internalTransferGroupId;
+            // Persist
+            updateInternalTransferStmt.run({
+              publicId: base.publicId,
+              isInternalTransfer: 1,
+              internalTransferDirection: base.internalTransferDirection,
+              internalTransferKind: base.internalTransferKind,
+              internalTransferGroupId: base.internalTransferGroupId,
+            });
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('[internalTransferMatcher] single-sided wallet transfer (Wise)', {
+                amountCents: base.amountCents,
+                accountId: base.accountId,
+                kind: base.internalTransferKind,
+                groupId: base.internalTransferGroupId,
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // Single-row reimbursement classification (keyword-based, before pair matching)
+    // This handles obvious reimbursements that don't need pairing
+    const reimbursementCutoffDate = new Date();
+    reimbursementCutoffDate.setDate(reimbursementCutoffDate.getDate() - 60);
+    const reimbursementCutoffDateStr = reimbursementCutoffDate.toISOString().split('T')[0];
+    
+    // Fetch recent transactions for context (for P2P matching)
+    const recentForContext: NormalizedCanonicalRow[] = [];
+    const reimbursementAccountIds = new Set<string>();
+    for (const base of normalizedBatch) {
+      if (base.accountId) {
+        reimbursementAccountIds.add(base.accountId);
+      }
+    }
+    
+    for (const accountId of reimbursementAccountIds) {
+      const recentRows = conn.prepare(`
+        SELECT 
+          id, publicId, bookingDate, valueDate, amountCents, currency, purpose,
+          counterpartName, counterpartyIban, accountIban, bankProfile, rawCode,
+          raw, importFile, importBatchId, category, categoryConfidence,
+          category_source AS categorySource, category_explanation AS categoryExplanation,
+          category_rule_id AS categoryRuleId, direction, fingerprint, createdAt,
+          source, sourceProfile, accountId, payee, memo, externalId, referenceId,
+          isTransfer, transferLinkId, confidence, isRefund, isRefunded, refundGroupId,
+          isInternalTransfer, internalTransferDirection, internalTransferKind, internalTransferGroupId,
+          isReimbursement, reimbursementRole, reimbursementGroupId, reimbursementShareRatio
+        FROM transactions
+        WHERE accountId = @accountId
+          AND bookingDate >= @cutoffDate
+          AND (isRefund = 0 OR isRefund IS NULL)
+          AND (isRefunded = 0 OR isRefunded IS NULL)
+          AND (refundGroupId IS NULL)
+          AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+          AND (internalTransferGroupId IS NULL)
+        ORDER BY bookingDate DESC
+        LIMIT 100
+      `).all({ accountId, cutoffDate: reimbursementCutoffDateStr }) as any[];
+      
+      const normalizedRecent: NormalizedCanonicalRow[] = recentRows.map(row => ({
+        id: row.id,
+        publicId: row.publicId,
+        bookingDate: row.bookingDate,
+        valueDate: row.valueDate,
+        amountCents: row.amountCents,
+        currency: row.currency,
+        purpose: row.purpose,
+        counterpartName: row.counterpartName,
+        counterpartyIban: row.counterpartyIban,
+        accountIban: row.accountIban,
+        bankProfile: row.bankProfile,
+        rawCode: row.rawCode,
+        raw: row.raw ? JSON.parse(row.raw) : {},
+        importFile: row.importFile,
+        importBatchId: row.importBatchId,
+        category: row.category,
+        categoryConfidence: row.categoryConfidence,
+        categorySource: row.categorySource,
+        categoryExplanation: row.categoryExplanation,
+        categoryRuleId: row.categoryRuleId,
+        direction: row.direction,
+        fingerprint: row.fingerprint,
+        source: row.source as Source,
+        sourceProfile: row.sourceProfile,
+        accountId: row.accountId,
+        payee: row.payee,
+        memo: row.memo,
+        externalId: row.externalId,
+        referenceId: row.referenceId,
+        isTransfer: Boolean(row.isTransfer),
+        transferLinkId: row.transferLinkId,
+        confidence: row.confidence,
+        isRefund: Boolean(row.isRefund),
+        isRefunded: Boolean(row.isRefunded),
+        refundGroupId: row.refundGroupId,
+        isInternalTransfer: Boolean(row.isInternalTransfer),
+        internalTransferDirection: row.internalTransferDirection,
+        internalTransferKind: row.internalTransferKind,
+        internalTransferGroupId: row.internalTransferGroupId,
+        isReimbursement: Boolean(row.isReimbursement),
+        reimbursementRole: row.reimbursementRole,
+        reimbursementGroupId: row.reimbursementGroupId,
+        reimbursementShareRatio: row.reimbursementShareRatio,
+        createdAt: row.createdAt,
+        transactionPayload: {} as Transaction,
+      }));
+      
+      recentForContext.push(...normalizedRecent);
+    }
+    
+    // Add current batch to context (for P2P matching within the same batch)
+    const allRecentForContext = [...recentForContext, ...normalizedBatch];
+    
+    // Apply single-row reimbursement classification
+    for (const base of normalizedBatch) {
+      if (base.isRefund || base.isRefunded || base.refundGroupId) continue;
+      if (base.isInternalTransfer || base.internalTransferGroupId) continue;
+      if (base.isReimbursement || base.reimbursementGroupId) continue;
+      
+      const classification = classifyReimbursementLike(base, {
+        recentTransactions: allRecentForContext,
+        daysWindow: 30,
+      });
+      
+      if (classification) {
+        base.isReimbursement = true;
+        base.reimbursementRole = classification.reimbursementRole;
+        base.reimbursementGroupId = classification.reimbursementGroupId;
+        base.reimbursementShareRatio = classification.reimbursementShareRatio ?? null;
+        
+        // Persist immediately
+        updateReimbursementStmt.run({
+          publicId: base.publicId,
+          isReimbursement: 1,
+          reimbursementRole: classification.reimbursementRole,
+          reimbursementGroupId: classification.reimbursementGroupId,
+          reimbursementShareRatio: classification.reimbursementShareRatio ?? null,
+        });
+        
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[reimbursementMatcher] keyword-based classification', {
+            publicId: base.publicId,
+            role: classification.reimbursementRole,
+            groupId: classification.reimbursementGroupId,
+            amountCents: base.amountCents,
+          });
         }
       }
     }
@@ -1086,17 +1423,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
     const newExpenses = eligibleForReimbursement.filter(r => r.amountCents < 0);
     
     // Fetch recent expenses from DB (last 60 days) as match candidates
-    const reimbursementCutoffDate = new Date();
-    reimbursementCutoffDate.setDate(reimbursementCutoffDate.getDate() - 60);
-    const reimbursementCutoffDateStr = reimbursementCutoffDate.toISOString().split('T')[0];
-    
-    // Get all accountIds from the batch
-    const reimbursementAccountIds = new Set<string>();
-    for (const base of normalizedBatch) {
-      if (base.accountId) {
-        reimbursementAccountIds.add(base.accountId);
-      }
-    }
+    // Reuse the reimbursementCutoffDate, reimbursementCutoffDateStr, and reimbursementAccountIds already declared above for single-row classification
     
     const recentExpensesFromDb: NormalizedCanonicalRow[] = [];
     for (const accountId of reimbursementAccountIds) {
@@ -1262,6 +1589,9 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
             case 'wallet':
               categoryId = 'internal:transfer_wallet' as any;
               break;
+            case 'payment_provider_funding':
+              categoryId = 'internal:transfer_other' as any; // Use 'other' category for payment provider funding
+              break;
             default:
               categoryId = 'internal:transfer_other' as any;
           }
@@ -1319,6 +1649,9 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         reimbursementGroupId: base.reimbursementGroupId,
         reimbursementShareRatio: base.reimbursementShareRatio,
         bankReferenceId: base.bankReferenceId,
+        isPassThrough: base.isPassThrough ? 1 : 0,
+        passThroughGroupId: base.passThroughGroupId,
+        isCashWithdrawal: base.isCashWithdrawal ? 1 : 0,
       });
 
       if ((info as any).changes === 1) inserted++;
@@ -1351,6 +1684,20 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
   try { console.log('[insert] starting tx, rows=' + rows.length); } catch {}
   tx(rows);
   try { console.log('[insert] inserted=' + inserted + ' duplicates=' + duplicates); } catch {}
+  
+  // Payment provider internal transfer detection: bank → PayPal funding
+  // Run after all transactions are inserted and accounts are created/linked
+  // This ensures we can find both the bank and PayPal accounts
+  // Note: detectPaymentProviderFunding is synchronous (better-sqlite3)
+  try {
+    detectPaymentProviderFunding(conn, { windowDays: 2 });
+  } catch (error: any) {
+    // Log but don't fail - detection is best-effort
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[insert] Payment provider funding detection failed:', error?.message || error);
+    }
+  }
+  
   return { inserted, duplicates };
 }
 
@@ -1377,25 +1724,72 @@ export function clearAll(conn: Database = db) {
 
 // Seed accounts table based on distinct accounts seen in transactions
 export function seedAccountsFromExistingTransactions(conn: Database = db): void {
-  // Collect distinct account keys from transactions
+  // Collect distinct account keys from transactions, including source profile for payment provider detection
   const rows = conn.prepare(`
     SELECT DISTINCT
       COALESCE(NULLIF(TRIM(accountId), ''), NULL) AS accountId,
-      COALESCE(NULLIF(TRIM(accountIban), ''), NULL) AS accountIban
+      COALESCE(NULLIF(TRIM(accountIban), ''), NULL) AS accountIban,
+      COALESCE(NULLIF(TRIM(sourceProfile), ''), NULL) AS sourceProfile,
+      COALESCE(NULLIF(TRIM(source), ''), NULL) AS source
     FROM transactions
     WHERE (accountId IS NOT NULL AND TRIM(accountId) <> '')
        OR (accountIban IS NOT NULL AND TRIM(accountIban) <> '')
-  `).all() as Array<{ accountId?: string | null; accountIban?: string | null }>;
+  `).all() as Array<{ 
+    accountId?: string | null; 
+    accountIban?: string | null;
+    sourceProfile?: string | null;
+    source?: string | null;
+  }>;
   if (!rows || rows.length === 0) return;
-  const insert = conn.prepare(`INSERT OR IGNORE INTO accounts (id, iban, name, role) VALUES (?, ?, ?, 'spending')`);
+  
+  // Use accountsService to create accounts with auto-detection of payment provider type
+  
   const tx = conn.transaction((batch: typeof rows) => {
     for (const r of batch) {
       const id = (r.accountId && r.accountId.trim()) ? r.accountId.trim() : (r.accountIban && r.accountIban.trim()) ? r.accountIban.trim() : null;
       if (!id) continue;
+      
+      // Check if account already exists
+      const existing = accountsService.getAccountById(conn, id);
+      if (existing) {
+        // Account exists - check if it should be upgraded to PAYMENT_PROVIDER
+        if (existing.type !== 'PAYMENT_PROVIDER') {
+          const accountName = existing.name || id;
+          const importSource = r.source === 'csv_paypal' ? 'csv_paypal' : r.sourceProfile || null;
+          if (accountsService.shouldBePaymentProviderAccount(accountName, importSource)) {
+            // Upgrade existing account to PAYMENT_PROVIDER (idempotent)
+            try {
+              conn.prepare(`UPDATE accounts SET type = 'PAYMENT_PROVIDER', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
+              if (process.env.NODE_ENV !== 'production') {
+                console.log('[seedAccounts] Upgraded account to PAYMENT_PROVIDER', { id, name: accountName });
+              }
+            } catch (err) {
+              // Ignore errors (e.g., type column might not exist in old schema)
+            }
+          }
+        }
+        continue; // Account already exists
+      }
+      
+      // Create new account with auto-detection
       const iban = r.accountIban && r.accountIban.trim() ? r.accountIban.trim() : null;
       const suffix = iban ? iban.slice(-4) : id.slice(-4);
       const name = `Konto ${suffix}`;
-      insert.run(id, iban, name);
+      const importSource = r.source === 'csv_paypal' ? 'csv_paypal' : r.sourceProfile || null;
+      
+      try {
+        accountsService.createAccount(conn, {
+          id,
+          name,
+          iban: iban || undefined,
+          type: accountsService.shouldBePaymentProviderAccount(name, importSource) ? 'PAYMENT_PROVIDER' : 'CHECKING',
+        }, undefined, importSource);
+      } catch (err: any) {
+        // If creation fails (e.g., account already exists from concurrent insert), ignore
+        if (process.env.NODE_ENV !== 'production' && !err?.message?.includes('UNIQUE constraint')) {
+          console.warn('[seedAccounts] Failed to create account', { id, name, error: err?.message });
+        }
+      }
     }
   });
   tx(rows);

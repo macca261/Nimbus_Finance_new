@@ -35,10 +35,12 @@ export type CategoryId =
   | 'dining:cafe'
   | 'dining:delivery'
   | 'dining:bakery'
+  | 'dining:fast_food'
   | 'shopping'
   | 'shopping:electronics'
   | 'shopping:home'
   | 'shopping:home_improvement'
+  | 'shopping:discount_store'
   | 'insurance'
   | 'insurance:travel'
   | 'travel:holiday'
@@ -51,6 +53,7 @@ export type CategoryId =
   | 'internal:transfer_savings'
   | 'internal:transfer_wallet'
   | 'internal:transfer_other'
+  | 'cash:withdrawal'
   | 'other';
 
 export interface CategoryMeta {
@@ -221,6 +224,11 @@ const REGISTRY: Record<CategoryId, CategoryMeta> = {
     labelDe: 'Bäckerei',
     isEssential: false,
   },
+  'dining:fast_food': {
+    id: 'dining:fast_food',
+    labelDe: 'Fast Food / Schnellimbiss',
+    isEssential: false,
+  },
   shopping: {
     id: 'shopping',
     labelDe: 'Einkauf',
@@ -239,6 +247,11 @@ const REGISTRY: Record<CategoryId, CategoryMeta> = {
   'shopping:home_improvement': {
     id: 'shopping:home_improvement',
     labelDe: 'Baumarkt & Heimwerken',
+    isEssential: false,
+  },
+  'shopping:discount_store': {
+    id: 'shopping:discount_store',
+    labelDe: 'Discount-Shop / Action',
     isEssential: false,
   },
   insurance: {
@@ -305,6 +318,11 @@ const REGISTRY: Record<CategoryId, CategoryMeta> = {
     id: 'internal:transfer_other',
     labelDe: 'Interner Transfer',
     isTransfer: true,
+    isEssential: false,
+  },
+  'cash:withdrawal': {
+    id: 'cash:withdrawal',
+    labelDe: 'Bargeldabhebung',
     isEssential: false,
   },
   other: {

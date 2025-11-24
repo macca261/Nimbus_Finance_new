@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import type { TxMini } from '../../hooks/useDashboardData';
 import { getCategoryMeta } from '../../lib/categories';
 import { formatCurrency, formatDate } from '../../lib/format';
+import { getTransactionDisplayName } from '../../lib/transactions/displayName';
 
 type RecentActivityMiniProps = {
   transactions: TxMini[];
@@ -16,7 +17,9 @@ export const RecentActivityMini: React.FC<RecentActivityMiniProps> = ({ transact
   return (
     <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-base font-medium text-slate-900 dark:text-slate-100 md:text-lg">Neueste Aktivitäten</h3>
+        <div className="space-y-1">
+          <h3 className="text-base font-medium text-slate-900 dark:text-slate-100 md:text-lg">Neueste Aktivitäten</h3>
+        </div>
         <Link
           to="/transactions"
           className="text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-300 dark:hover:text-indigo-200"
@@ -43,7 +46,7 @@ export const RecentActivityMini: React.FC<RecentActivityMiniProps> = ({ transact
                     {formatDate(tx.bookingDate ?? undefined)}
                   </p>
                   <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                    {tx.payee || tx.purpose || tx.counterpart || '—'}
+                    {getTransactionDisplayName(tx)}
                   </p>
                   {tx.memo ? (
                     <p className="truncate text-xs text-slate-500 dark:text-slate-400">{tx.memo}</p>

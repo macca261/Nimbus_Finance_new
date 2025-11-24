@@ -36,14 +36,16 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   }, []);
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-50">
+    <div className="flex min-h-screen bg-nf-bg-root text-nf-text-main transition-colors">
       <Sidebar status={status} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-      <div className="flex flex-1 flex-col">
-        <main className="relative flex-1 overflow-y-auto px-4 py-6 sm:px-8 lg:px-10 xl:px-12">
-          <div className="mb-4 flex items-center justify-between md:hidden">
-            <SidebarToggleButton onClick={() => setSidebarOpen(true)} />
+      <div className="flex flex-1 flex-col relative z-10">
+        <main className="relative flex-1 overflow-y-auto min-h-screen bg-nf-shell">
+          <div className="max-w-[1360px] mx-auto px-8 py-6">
+            <div className="mb-4 flex items-center justify-between md:hidden">
+              <SidebarToggleButton onClick={() => setSidebarOpen(true)} />
+            </div>
+            {children}
           </div>
-          {children}
         </main>
       </div>
     </div>

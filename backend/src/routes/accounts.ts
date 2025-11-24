@@ -1,7 +1,8 @@
 import { Router } from 'express';
-import type { Account, AccountRole } from '../types/core';
+import type { Request, Response } from 'express';
 import BetterSqlite3 from 'better-sqlite3';
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
+import * as accountsService from '../services/accountsService';
 
 const filePath = process.env.NIMBUS_DB_PATH || process.env.DB_FILE || 'nimbus.db';
 const fallbackDb = new BetterSqlite3(filePath);
@@ -11,80 +12,106 @@ function getConnection(req: any): BetterSqliteDatabase {
   return ((req.app as any)?.locals?.db ?? null) || fallbackDb;
 }
 
-const ROLES: AccountRole[] = ['spending', 'savings', 'wallet'];
-function isValidRole(v: any): v is AccountRole {
-  return typeof v === 'string' && ROLES.includes(v as AccountRole);
-}
-
 // GET /api/accounts
-accountsRouter.get('/', (req, res) => {
+accountsRouter.get('/', (req: Request, res: Response) => {
   try {
     const db = getConnection(req);
-    const rows = db.prepare(`SELECT id, iban, name, role, createdAt FROM accounts ORDER BY createdAt DESC`).all() as Array<any>;
-    const data: Account[] = rows.map(r => ({
-      id: String(r.id),
-      iban: r.iban ?? null,
-      name: r.name ?? null,
-      role: (r.role as AccountRole) ?? 'spending',
-      createdAt: r.createdAt,
-    }));
-    res.json({ data });
-  } catch (e: any) {
-    res.status(500).json({ error: 'Failed to load accounts' });
+    const includeArchived = req.query.includeArchived === 'true';
+    const accounts = accountsService.listAccounts(db, { includeArchived });
+    res.json({ data: accounts });
+  } catch (error: any) {
+    console.error('[accounts] GET / error:', error);
+    res.status(500).json({ error: 'Failed to load accounts', message: error?.message });
   }
 });
 
 // POST /api/accounts (create)
-accountsRouter.post('/', (req, res) => {
+accountsRouter.post('/', (req: Request, res: Response) => {
   try {
     const db = getConnection(req);
-    const { id, iban, name, role } = req.body || {};
-    // Allow server-side id generation when not provided
-    let accountId = typeof id === 'string' && id.trim() ? id.trim() : null;
-    if (!accountId) {
-      try {
-        accountId = require('node:crypto').randomUUID();
-      } catch {
-        accountId = String(Date.now());
-      }
+    const { name, type, iban, accountNumber, isPrimary } = req.body || {};
+    
+    // Validate required fields
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ error: 'Account name is required' });
     }
-    const roleVal: AccountRole = isValidRole(role) ? role : 'spending';
-    const stmt = db.prepare(`INSERT INTO accounts (id, iban, name, role) VALUES (?, ?, ?, ?)`);
-    stmt.run(accountId, typeof iban === 'string' ? iban : null, typeof name === 'string' ? name : null, roleVal);
-    res.json({ ok: true, account: { id: accountId, iban: iban ?? null, name: name ?? null, role: roleVal } });
-  } catch (e: any) {
-    res.status(500).json({ error: 'Failed to create account' });
+    
+    if (!type || !accountsService.isValidAccountType(type)) {
+      return res.status(400).json({ error: 'Valid account type is required (CHECKING, SAVINGS, CREDIT_CARD, CASH, OTHER)' });
+    }
+
+    const account = accountsService.createAccount(db, {
+      name: name.trim(),
+      type,
+      iban: iban || null,
+      accountNumber: accountNumber || null,
+      isPrimary: Boolean(isPrimary),
+    });
+
+    res.status(201).json({ ok: true, account });
+  } catch (error: any) {
+    console.error('[accounts] POST / error:', error);
+    if (error.message === 'Account name is required' || error.message.includes('Invalid account type')) {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Failed to create account', message: error?.message });
   }
 });
 
-// PATCH /api/accounts/:id (update role and metadata)
-accountsRouter.patch('/:id', (req, res) => {
+// PUT /api/accounts/:id (update account)
+accountsRouter.put('/:id', (req: Request, res: Response) => {
   try {
     const db = getConnection(req);
     const id = String(req.params.id || '').trim();
-    if (!id) return res.status(400).json({ error: 'invalid id' });
-    const { role, name, iban } = req.body || {};
-    const updates: string[] = [];
-    const params: any[] = [];
-    if (typeof name === 'string') {
-      updates.push('name = ?'); params.push(name);
+    if (!id) {
+      return res.status(400).json({ error: 'Invalid account ID' });
     }
-    if (typeof iban === 'string') {
-      updates.push('iban = ?'); params.push(iban);
+
+    const { name, type, iban, accountNumber, isPrimary } = req.body || {};
+    
+    // Build update input (only include provided fields)
+    const updateInput: accountsService.UpdateAccountInput = {};
+    if (name !== undefined) updateInput.name = name;
+    if (type !== undefined) updateInput.type = type;
+    if (iban !== undefined) updateInput.iban = iban;
+    if (accountNumber !== undefined) updateInput.accountNumber = accountNumber;
+    if (isPrimary !== undefined) updateInput.isPrimary = isPrimary;
+
+    if (Object.keys(updateInput).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
     }
-    if (typeof role !== 'undefined') {
-      if (!isValidRole(role)) return res.status(400).json({ error: 'invalid role' });
-      updates.push('role = ?'); params.push(role);
+
+    const account = accountsService.updateAccount(db, id, updateInput);
+    res.json({ ok: true, account });
+  } catch (error: any) {
+    console.error('[accounts] PUT /:id error:', error);
+    if (error.message === 'Account not found') {
+      return res.status(404).json({ error: error.message });
     }
-    if (updates.length === 0) return res.status(400).json({ error: 'nothing to update' });
-    params.push(id);
-    const sql = `UPDATE accounts SET ${updates.join(', ')} WHERE id = ?`;
-    const r = db.prepare(sql).run(...params);
-    if (!r.changes) return res.status(404).json({ error: 'account not found' });
-    const row = db.prepare(`SELECT id, iban, name, role, createdAt FROM accounts WHERE id = ?`).get(id) as any;
-    res.json({ ok: true, account: { id: row.id, iban: row.iban ?? null, name: row.name ?? null, role: row.role ?? 'spending', createdAt: row.createdAt } as Account });
-  } catch (e: any) {
-    res.status(500).json({ error: 'Failed to update account' });
+    if (error.message.includes('Invalid account type') || error.message.includes('cannot be empty')) {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Failed to update account', message: error?.message });
+  }
+});
+
+// DELETE /api/accounts/:id (soft delete/archive)
+accountsRouter.delete('/:id', (req: Request, res: Response) => {
+  try {
+    const db = getConnection(req);
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({ error: 'Invalid account ID' });
+    }
+
+    accountsService.deleteAccount(db, id);
+    res.json({ ok: true, message: 'Account deleted' });
+  } catch (error: any) {
+    console.error('[accounts] DELETE /:id error:', error);
+    if (error.message === 'Account not found') {
+      return res.status(404).json({ error: error.message });
+    }
+    res.status(500).json({ error: 'Failed to delete account', message: error?.message });
   }
 });
 

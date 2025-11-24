@@ -10,6 +10,34 @@
     --tooltip-text: #0f172a;
     --tooltip-muted: #475569;
     --axis-color: #475569;
+    
+    /* Nimbus Dream Design Tokens - Light Mode */
+    /* Backgrounds */
+    --nf-bg-root: #f3f4f8;
+    --nf-bg-shell: linear-gradient(135deg, #f5f7fb 0%, #ecf3ff 100%);
+    --nf-bg-sidebar: #0f172a;
+    --nf-bg-card: #ffffff;
+    --nf-bg-card-subtle: rgba(255, 255, 255, 0.6);
+    
+    /* Borders & Separators */
+    --nf-border-subtle: #e2e8f0;
+    --nf-border-strong: #cbd5e1;
+    
+    /* Text */
+    --nf-text-main: #0f172a;
+    --nf-text-muted: #64748b;
+    --nf-text-soft: #94a3b8;
+    
+    /* Accents */
+    --nf-primary: #3b82f6;
+    --nf-primary-soft: rgba(59, 130, 246, 0.1);
+    --nf-positive: #10b981;
+    --nf-negative: #ef4444;
+    --nf-warning: #f59e0b;
+    
+    /* Shadows */
+    --nf-shadow-elevated: 0 10px 40px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+    --nf-shadow-card: 0 4px 16px rgba(0, 0, 0, 0.06), 0 1px 4px rgba(0, 0, 0, 0.03);
   }
 
   .dark {
@@ -19,14 +47,45 @@
     --tooltip-text: #e2e8f0;
     --tooltip-muted: #94a3b8;
     --axis-color: #94a3b8;
+    
+    /* Nimbus Dream Design Tokens - Dark Mode */
+    /* Backgrounds */
+    --nf-bg-root: #020617;
+    --nf-bg-shell: radial-gradient(ellipse at top, #020617 0%, #0f172a 50%, #1d2a3f 100%);
+    --nf-bg-sidebar: #050816;
+    --nf-bg-card: #0b1220;
+    --nf-bg-card-subtle: rgba(11, 18, 32, 0.6);
+    
+    /* Borders & Separators */
+    --nf-border-subtle: #1f2937;
+    --nf-border-strong: #374151;
+    
+    /* Text */
+    --nf-text-main: #f1f5f9;
+    --nf-text-muted: #94a3b8;
+    --nf-text-soft: #64748b;
+    
+    /* Accents */
+    --nf-primary: #60a5fa;
+    --nf-primary-soft: rgba(96, 165, 250, 0.15);
+    --nf-positive: #34d399;
+    --nf-negative: #f87171;
+    --nf-warning: #fbbf24;
+    
+    /* Shadows */
+    --nf-shadow-elevated: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(96, 165, 250, 0.08);
+    --nf-shadow-card: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 20px rgba(96, 165, 250, 0.05);
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 antialiased;
+    @apply antialiased;
+    background: var(--nf-bg-root);
+    color: var(--nf-text-main);
   }
 
   .dark body {
-    @apply bg-slate-950 text-slate-50;
+    background: var(--nf-bg-root);
+    background-attachment: fixed;
   }
 }
 

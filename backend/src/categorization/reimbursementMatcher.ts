@@ -1,6 +1,19 @@
 import type { NormalizedCanonicalRow } from '../db';
+import crypto from 'node:crypto';
 
 export type ReimbursementRole = 'payer' | 'receiver';
+
+export interface ReimbursementResult {
+  isReimbursement: true;
+  reimbursementRole: ReimbursementRole;
+  reimbursementGroupId: string;
+  reimbursementShareRatio?: number | null;
+}
+
+export interface MatcherContext {
+  recentTransactions?: NormalizedCanonicalRow[];
+  daysWindow?: number;
+}
 
 export interface ReimbursementMatchConfig {
   daysWindow?: number; // default 30
@@ -201,5 +214,364 @@ export function applyReimbursementFlags(
   };
 
   return { expense: expenseWithFlags, income: incomeWithFlags };
+}
+
+/**
+ * Normalize text for keyword matching.
+ */
+function normalizeTextForKeywords(text: string | null | undefined): string {
+  if (!text) return '';
+  return text
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Check if text contains reimbursement keywords for incoming reimbursements.
+ */
+function hasReimbursementKeywords(text: string): boolean {
+  const normalized = normalizeTextForKeywords(text);
+  const keywords = [
+    'RUCKBUCHUNG',
+    'RUCKZAHLUNG',
+    'RUECKZAHLUNG',
+    'ERSTATTUNG',
+    'GUTSCHRIFT',
+    'ERSTATTUNG PAYPAL',
+    'RUCKBUCHUNG PAYPAL',
+    'P2P_AUTO_CANCEL',
+    'REFUND',
+    'RUCKERSTATTUNG',
+  ];
+  return keywords.some(keyword => normalized.includes(keyword));
+}
+
+/**
+ * Check if text suggests a PayPal refund pattern.
+ */
+function isPayPalRefundPattern(text: string): boolean {
+  const normalized = normalizeTextForKeywords(text);
+  // PayPal refund patterns
+  const patterns = [
+    /RUCKBUCHUNG\s+PAYPAL/i,
+    /PAYPAL.*RUCKBUCHUNG/i,
+    /PAYPAL.*P2P_AUTO_CANCEL/i,
+    /PAYPAL.*REFUND/i,
+  ];
+  return patterns.some(pattern => pattern.test(normalized));
+}
+
+/**
+ * Generate a stable group ID for a reimbursement based on counterparty and month.
+ */
+function generateReimbursementGroupId(
+  row: NormalizedCanonicalRow,
+  role: ReimbursementRole,
+): string {
+  const counterpart = normalizeTextForKeywords(row.counterpartName ?? row.payee ?? '');
+  const month = row.bookingDate.slice(0, 7); // YYYY-MM
+  const hashInput = `${counterpart}_${month}_${role}`;
+  const hash = crypto.createHash('sha256').update(hashInput).digest('hex').slice(0, 8);
+  return `rb_keyword_${hash}`;
+}
+
+/**
+ * Classify a single transaction as a reimbursement based on keywords and patterns.
+ * This handles obvious reimbursements that don't require pairing with another transaction.
+ * 
+ * Priority:
+ * 1. Incoming reimbursements (positive amounts) with refund keywords
+ * 2. PayPal refund patterns
+ * 3. P2P names that appear as both payee and payer (requires context)
+ * 
+ * @param row - The transaction to classify
+ * @param ctx - Context with recent transactions for P2P matching
+ * @returns ReimbursementResult if classified, null otherwise
+ */
+export function classifyReimbursementLike(
+  row: NormalizedCanonicalRow,
+  ctx: MatcherContext = {},
+): ReimbursementResult | null {
+  // Skip if already classified
+  if (row.isReimbursement || row.reimbursementGroupId) {
+    return null;
+  }
+  
+  // Skip if already a refund or internal transfer
+  if (row.isRefund || row.isRefunded || row.refundGroupId) {
+    return null;
+  }
+  if (row.isInternalTransfer || row.internalTransferGroupId) {
+    return null;
+  }
+  
+  // Combine all text fields
+  const purposeText = row.purpose ?? '';
+  const memoText = row.memo ?? '';
+  const counterpartText = row.counterpartName ?? '';
+  const payeeText = row.payee ?? '';
+  const combinedText = [purposeText, memoText, counterpartText, payeeText].join(' ');
+  
+  // Check for incoming reimbursements (positive amounts)
+  if (row.amountCents > 0) {
+    // Check for explicit reimbursement keywords
+    if (hasReimbursementKeywords(combinedText)) {
+      const groupId = generateReimbursementGroupId(row, 'receiver');
+      return {
+        isReimbursement: true,
+        reimbursementRole: 'receiver',
+        reimbursementGroupId: groupId,
+        reimbursementShareRatio: null,
+      };
+    }
+    
+    // Check for PayPal refund patterns
+    if (isPayPalRefundPattern(combinedText)) {
+      const groupId = generateReimbursementGroupId(row, 'receiver');
+      return {
+        isReimbursement: true,
+        reimbursementRole: 'receiver',
+        reimbursementGroupId: groupId,
+        reimbursementShareRatio: null,
+      };
+    }
+    
+    // Check for P2P reimbursement pattern: same name as recent expense
+    const daysWindow = ctx.daysWindow ?? 30;
+    const recentTransactions = ctx.recentTransactions ?? [];
+    const rowDate = new Date(row.bookingDate);
+    
+    // Normalize counterparty name for matching
+    const normalizedCounterpart = normalizeTextForKeywords(counterpartText || payeeText);
+    if (normalizedCounterpart.length > 3) { // Only if we have a meaningful name
+      // Look for recent negative transactions from the same counterparty
+      const matchingExpense = recentTransactions.find(tx => {
+        if (tx.publicId === row.publicId) return false;
+        if (tx.amountCents >= 0) return false;
+        if (tx.isReimbursement || tx.reimbursementGroupId) return false;
+        if (tx.isRefund || tx.isRefunded || tx.refundGroupId) return false;
+        if (tx.isInternalTransfer || tx.internalTransferGroupId) return false;
+        
+        const txCounterpart = normalizeTextForKeywords(tx.counterpartName ?? tx.payee ?? '');
+        if (txCounterpart !== normalizedCounterpart) return false;
+        
+        const txDate = new Date(tx.bookingDate);
+        const daysDiff = Math.abs((rowDate.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24));
+        return daysDiff <= daysWindow;
+      });
+      
+      if (matchingExpense) {
+        // Found a matching expense - this is likely a reimbursement
+        const ids = [matchingExpense.publicId, row.publicId].sort();
+        const groupId = `rb_${ids[0]}_${ids[1]}`;
+        return {
+          isReimbursement: true,
+          reimbursementRole: 'receiver',
+          reimbursementGroupId: groupId,
+          reimbursementShareRatio: null,
+        };
+      }
+    }
+  }
+  
+  // Check for outgoing reimbursements (negative amounts) - more conservative
+  if (row.amountCents < 0) {
+    const recentTransactions = ctx.recentTransactions ?? [];
+    const daysWindow = ctx.daysWindow ?? 30;
+    const rowDate = new Date(row.bookingDate);
+    
+    // Normalize counterparty name
+    const normalizedCounterpart = normalizeTextForKeywords(counterpartText || payeeText);
+    if (normalizedCounterpart.length > 3) {
+      // Look for recent positive transactions to the same counterparty
+      const matchingIncome = recentTransactions.find(tx => {
+        if (tx.publicId === row.publicId) return false;
+        if (tx.amountCents <= 0) return false;
+        if (tx.isReimbursement || tx.reimbursementGroupId) return false;
+        if (tx.isRefund || tx.isRefunded || tx.refundGroupId) return false;
+        if (tx.isInternalTransfer || tx.internalTransferGroupId) return false;
+        
+        const txCounterpart = normalizeTextForKeywords(tx.counterpartName ?? tx.payee ?? '');
+        if (txCounterpart !== normalizedCounterpart) return false;
+        
+        const txDate = new Date(tx.bookingDate);
+        const daysDiff = Math.abs((rowDate.getTime() - txDate.getTime()) / (1000 * 60 * 60 * 24));
+        return daysDiff <= daysWindow;
+      });
+      
+      if (matchingIncome) {
+        // Found a matching income - this negative might be paying back
+        // Only mark if the income was already marked as a reimbursement
+        if (matchingIncome.isReimbursement && matchingIncome.reimbursementGroupId) {
+          return {
+            isReimbursement: true,
+            reimbursementRole: 'payer',
+            reimbursementGroupId: matchingIncome.reimbursementGroupId,
+            reimbursementShareRatio: matchingIncome.reimbursementShareRatio ?? null,
+          };
+        }
+      }
+    }
+  }
+  
+  return null;
+}
+
+export interface ReimbursementMatchSignals {
+  counterpartyScore: number;
+  timeScore: number;
+  amountScore: number;
+  contextScore: number;
+  noteScore: number;
+  total: number;
+}
+
+interface ConfidenceContext {
+  expenseRow: {
+    amountCents: number;
+    bookingDate: string;
+    counterpartName: string | null;
+    payee: string | null;
+    purpose: string | null;
+    memo: string | null;
+    category: string | null;
+  };
+  reimbursementRow: {
+    amountCents: number;
+    bookingDate: string;
+    counterpartName: string | null;
+    payee: string | null;
+    purpose: string | null;
+    memo: string | null;
+    category: string | null;
+  };
+}
+
+/**
+ * Compute confidence score for a reimbursement match.
+ * Returns a score from 0-100 based on various signals.
+ */
+export function computeReimbursementConfidence(ctx: ConfidenceContext): ReimbursementMatchSignals {
+  const { expenseRow, reimbursementRow } = ctx;
+
+  // 1. Counterparty score (max 30)
+  let counterpartyScore = 0;
+  const expenseCounterpart = normalizeTextForKeywords(expenseRow.counterpartName ?? expenseRow.payee ?? '');
+  const reimbursementCounterpart = normalizeTextForKeywords(reimbursementRow.counterpartName ?? reimbursementRow.payee ?? '');
+  
+  if (expenseCounterpart && reimbursementCounterpart) {
+    if (expenseCounterpart === reimbursementCounterpart) {
+      counterpartyScore = 30; // Exact match
+    } else if (
+      expenseCounterpart.includes(reimbursementCounterpart) ||
+      reimbursementCounterpart.includes(expenseCounterpart)
+    ) {
+      counterpartyScore = 20; // Fuzzy match (contains)
+    }
+  }
+
+  // 2. Time difference score (max 20)
+  let timeScore = 0;
+  const expenseDate = new Date(expenseRow.bookingDate);
+  const reimbursementDate = new Date(reimbursementRow.bookingDate);
+  const daysDiff = Math.abs((expenseDate.getTime() - reimbursementDate.getTime()) / (1000 * 60 * 60 * 24));
+  
+  if (daysDiff === 0) {
+    timeScore = 20;
+  } else if (daysDiff <= 3) {
+    timeScore = 17;
+  } else if (daysDiff <= 7) {
+    timeScore = 12;
+  } else if (daysDiff <= 14) {
+    timeScore = 8;
+  } else if (daysDiff <= 30) {
+    timeScore = 5;
+  } else {
+    timeScore = 0;
+  }
+
+  // 3. Amount correlation score (max 25)
+  let amountScore = 0;
+  const expenseAbs = Math.abs(expenseRow.amountCents);
+  const reimbursementAbs = Math.abs(reimbursementRow.amountCents);
+  
+  if (expenseAbs > 0) {
+    const ratio = reimbursementAbs / expenseAbs;
+    if (ratio >= 0.95 && ratio <= 1.05) {
+      amountScore = 25; // 95-105%
+    } else if (ratio >= 0.80 && ratio <= 1.20) {
+      amountScore = 18; // 80-120%
+    } else if (ratio >= 0.50 && ratio <= 1.50) {
+      amountScore = 10; // 50-150%
+    }
+  }
+
+  // 4. Context / merchant score (max 15)
+  let contextScore = 0;
+  const expenseCategory = expenseRow.category;
+  const reimbursementCategory = reimbursementRow.category;
+  
+  // Combine all text fields for merchant matching
+  const expenseText = normalizeTextForKeywords(
+    [expenseRow.purpose, expenseRow.memo, expenseRow.counterpartName, expenseRow.payee].filter(Boolean).join(' ')
+  );
+  const reimbursementText = normalizeTextForKeywords(
+    [reimbursementRow.purpose, reimbursementRow.memo, reimbursementRow.counterpartName, reimbursementRow.payee].filter(Boolean).join(' ')
+  );
+  
+  // Check for merchant name overlap (simple word-based)
+  const expenseWords = expenseText.split(/\s+/).filter(w => w.length > 2);
+  const reimbursementWords = reimbursementText.split(/\s+/).filter(w => w.length > 2);
+  const commonWords = expenseWords.filter(w => reimbursementWords.includes(w));
+  
+  if (expenseCategory && reimbursementCategory && expenseCategory === reimbursementCategory) {
+    if (commonWords.length >= 2) {
+      contextScore = 15; // Same category + merchant keywords overlap
+    } else {
+      contextScore = 8; // Same category only
+    }
+  } else if (commonWords.length >= 2) {
+    contextScore = 10; // Merchant keywords overlap but different category
+  }
+
+  // 5. Note / description keywords score (max 10)
+  let noteScore = 0;
+  const combinedText = normalizeTextForKeywords(
+    [reimbursementRow.purpose, reimbursementRow.memo].filter(Boolean).join(' ')
+  );
+  
+  const reimbursementKeywords = [
+    'RUCKBUCHUNG',
+    'RUCKZAHLUNG',
+    'RUECKZAHLUNG',
+    'ERSTATTUNG',
+    'GUTSCHRIFT',
+    'REFUND',
+    'RUCKERSTATTUNG',
+  ];
+  
+  const matchingKeywords = reimbursementKeywords.filter(keyword => combinedText.includes(keyword)).length;
+  
+  if (matchingKeywords >= 3) {
+    noteScore = 10;
+  } else if (matchingKeywords === 2) {
+    noteScore = 7;
+  } else if (matchingKeywords === 1) {
+    noteScore = 4;
+  }
+
+  const total = Math.round(counterpartyScore + timeScore + amountScore + contextScore + noteScore);
+
+  return {
+    counterpartyScore,
+    timeScore,
+    amountScore,
+    contextScore,
+    noteScore,
+    total: Math.min(100, Math.max(0, total)), // Clamp to 0-100
+  };
 }
 

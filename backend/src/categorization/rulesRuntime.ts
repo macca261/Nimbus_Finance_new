@@ -542,6 +542,68 @@ export const SYSTEM_RULES_CONFIG: RuleConfig[] = [
       t.includes('WWW.NATUURHUISJE.NL'),
     defaultConfidence: 0.95,
   },
+  // Fast food - KFC
+  {
+    id: 'dining:kfc',
+    category: 'dining:fast_food',
+    match: (m, t) =>
+      m.includes('KFC') ||
+      t.includes('KFC') ||
+      t.includes('KENTUCKY FRIED CHICKEN') ||
+      m.includes('KENTUCKY FRIED CHICKEN'),
+    defaultConfidence: 0.95,
+  },
+  // Discount stores - Action
+  {
+    id: 'shopping:action',
+    category: 'shopping:discount_store',
+    match: (m, t) => {
+      // Match "ACTION" as a word (surrounded by spaces or start/end) to avoid matching "Aktion" (German for "action/event")
+      const actionPattern = /\bACTION\b/;
+      return actionPattern.test(m) || actionPattern.test(t);
+    },
+    defaultConfidence: 0.9,
+  },
+  // Cafés / coffee shops - conservative patterns to avoid B2B false positives
+  {
+    id: 'dining:cafe',
+    category: 'dining:cafe',
+    match: (m, t) => {
+      // Match "CAFE" or "CAFÉ" or "COFFEE" as words
+      const cafePattern = /\b(CAFE|CAFÉ|COFFEE)\b/;
+      return cafePattern.test(m) || cafePattern.test(t);
+    },
+    defaultConfidence: 0.8,
+  },
+  // Fuel - Aral Station (more specific than generic Aral)
+  {
+    id: 'transport:aral_station',
+    category: 'transport:fuel',
+    match: (m, t) =>
+      (m.includes('ARAL STATION') || t.includes('ARAL STATION')) ||
+      (m.includes('ARAL') && t.includes('ARAL STATION')),
+    defaultConfidence: 0.95,
+  },
+  // Fuel - Aral (generic)
+  {
+    id: 'transport:aral',
+    category: 'transport:fuel',
+    match: (m, t) =>
+      (m.includes('ARAL') || t.includes('ARAL')) &&
+      !t.includes('ARAL STATION'), // Avoid double-matching if Aral Station already matched
+    defaultConfidence: 0.9,
+  },
+  // Photo booths / entertainment - BILDWERK FOTOAUTOMAT
+  {
+    id: 'shopping:bildwerk_fotoautomat',
+    category: 'shopping',
+    match: (m, t) =>
+      m.includes('BILDWERK FOTOAUTOMAT') ||
+      t.includes('BILDWERK FOTOAUTOMAT') ||
+      (m.includes('FOTOAUTOMAT') && m.includes('BILDWERK')) ||
+      (t.includes('FOTOAUTOMAT') && t.includes('BILDWERK')),
+    defaultConfidence: 0.9,
+  },
 ];
 
 // ============================================================================

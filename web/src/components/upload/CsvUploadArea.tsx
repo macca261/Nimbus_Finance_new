@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { UploadCloud } from 'lucide-react';
 import { useFinanceStore } from '../../state/useFinanceStore';
 import { toast } from '../../lib/toast';
+import { evaluateQuietly } from '../../lib/achievements/evaluateQuietly';
+import { emitDataMutated } from '../../lib/dataEvents';
 
 export type CsvUploadAreaVariant = 'compact' | 'full' | 'inline';
 
@@ -94,6 +96,10 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
         toast(message, 'success');
         await applyImportResult({ profileId, inserted });
         onImported?.(data ?? undefined);
+        // Emit data mutation event to trigger refetch in other components (e.g., coach story)
+        emitDataMutated({ reason: 'imports:csv-uploaded' });
+        // Trigger achievement evaluation in background
+        void evaluateQuietly();
         return;
       }
 

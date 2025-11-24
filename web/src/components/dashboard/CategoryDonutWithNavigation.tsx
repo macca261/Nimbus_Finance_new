@@ -10,6 +10,8 @@ type CategoryDonutWithNavigationProps = {
   loading?: boolean;
   dateRangeLabel: string;
   onCategoryClick: (categoryId: string) => void;
+  noCard?: boolean;
+  noHeader?: boolean;
 };
 
 // Internal transfer categories that should be excluded from spending donut
@@ -30,6 +32,8 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
   loading,
   dateRangeLabel,
   onCategoryClick,
+  noCard,
+  noHeader,
 }) => {
   const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
   // Filter out internal transfer categories and zero amounts
@@ -44,29 +48,29 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
       share: total > 0 ? slice.total / total : 0,
     }));
 
-  return (
-    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h3 className="text-base font-medium text-slate-900 dark:text-slate-100 md:text-lg">
-            Ausgaben nach Kategorie
-          </h3>
-          <p className="text-xs text-slate-500 dark:text-slate-400">Letzte {dateRangeLabel}</p>
+  const content = (
+    <>
+      {!noHeader && (
+        <div className="mb-4 space-y-1">
+          <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Ausgaben nach Kategorie</h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Letzte {dateRangeLabel}</p>
         </div>
-      </div>
+      )}
 
-      <div className="grid gap-4 sm:grid-cols-[1.2fr_1fr]">
-        <div className="flex items-center justify-center">
+      {/* Grid layout: donut on left, legend on right - reduces whitespace */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-6 lg:gap-8">
+        {/* Donut Chart - Larger and more prominent, takes more space */}
+        <div className="flex min-h-[400px] lg:min-h-[450px] flex-1 items-center justify-center">
           {loading ? (
-            <div className="flex h-48 items-center justify-center text-xs text-slate-500 dark:text-slate-400">
+            <div className="flex h-72 items-center justify-center text-xs text-slate-500 dark:text-slate-400">
               Lade Daten…
             </div>
           ) : !filtered.length ? (
-            <div className="flex h-48 items-center justify-center text-xs text-slate-500 dark:text-slate-400">
+            <div className="flex h-72 items-center justify-center text-xs text-slate-500 dark:text-slate-400">
               Noch keine Ausgaben-Daten.
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={200}>
+            <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
                   data={filtered}
@@ -74,8 +78,8 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
                   nameKey="label"
                   cx="50%"
                   cy="50%"
-                  innerRadius="60%"
-                  outerRadius="80%"
+                  innerRadius="45%"
+                  outerRadius="85%"
                   paddingAngle={1}
                   label={false}
                   labelLine={false}
@@ -126,7 +130,8 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
           )}
         </div>
 
-        <ul className="flex flex-col gap-2">
+        {/* Legend - Right side, compact but readable */}
+        <ul className="flex flex-col gap-1.5 sm:gap-2.5 lg:min-w-[240px]">
           {topFive.map(slice => {
             const meta = getCategoryMeta(slice.id);
             const isHovered = hoveredCategory === slice.id;
@@ -136,15 +141,15 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
                 onClick={() => onCategoryClick(slice.id)}
                 onMouseEnter={() => setHoveredCategory(slice.id)}
                 onMouseLeave={() => setHoveredCategory(null)}
-                className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2 text-sm transition ${
+                className={`flex cursor-pointer items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm transition ${
                   isHovered
                     ? 'border-indigo-300 bg-indigo-50 dark:border-indigo-500/40 dark:bg-indigo-500/10'
                     : 'border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/60'
                 }`}
               >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
+                <div className="flex min-w-0 flex-1 items-center gap-2">
                   <span
-                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-xs"
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-lg text-xs sm:h-6 sm:w-6"
                     style={{ background: `${meta.color}33`, color: meta.color }}
                   >
                     {meta.icon ?? '•'}
@@ -161,7 +166,7 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
                     </p>
                   </div>
                 </div>
-                <span className="text-xs font-medium text-slate-600 dark:text-slate-300 tabular-nums shrink-0 ml-2">
+                <span className="shrink-0 text-xs font-medium tabular-nums text-slate-600 dark:text-slate-300 sm:ml-2">
                   {formatPercent(slice.share)}
                 </span>
               </li>
@@ -174,9 +179,21 @@ export const CategoryDonutWithNavigation: React.FC<CategoryDonutWithNavigationPr
           ) : null}
         </ul>
       </div>
-      <p className="mt-4 text-xs text-slate-500 dark:text-slate-400 text-center">
-        Interne Überträge werden getrennt angezeigt und nicht als Ausgaben gezählt.
-      </p>
+      {!noHeader && (
+        <p className="mt-4 text-xs text-slate-500 dark:text-slate-400 text-center">
+          Interne Überträge werden getrennt angezeigt und nicht als Ausgaben gezählt.
+        </p>
+      )}
+    </>
+  );
+
+  if (noCard) {
+    return <div className="flex min-h-[260px] flex-col">{content}</div>;
+  }
+
+  return (
+    <div className="flex min-h-[260px] flex-col rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5 lg:p-6">
+      {content}
     </div>
   );
 };

@@ -13,8 +13,8 @@ describe('Accounts seeding from transactions', () => {
   });
 
   it('seeds accounts from distinct transaction accountId/IBAN pairs and is idempotent', () => {
-    const ins = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, accountId, direction)
-      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, ?)`);
+    const ins = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, accountId, direction, isCashWithdrawal)
+      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, ?, 0)`);
     ins.run('2025-10-01', '2025-10-01', -1000, 'Einkauf', 'REWE', 'DE-IBAN-001', 'ACC-001', 'out');
     ins.run('2025-10-02', '2025-10-02', -2000, 'Kraftstoff', 'ARAL', 'DE-IBAN-002', 'ACC-002', 'out');
     ins.run('2025-10-03', '2025-10-03', +3000, 'Gehalt', 'Firma', 'DE-IBAN-001', 'ACC-001', 'in');

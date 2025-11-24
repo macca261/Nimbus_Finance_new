@@ -1,16 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
-import { Link2 } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from '../layout/AppShell';
-import { formatCurrency, formatDate } from '../lib/format';
-import { CATEGORY_OPTIONS, getCategoryMeta } from '../lib/categories';
-import CategoryControl from '../components/CategoryControl';
-import { ExplanationTooltip } from '../components/ExplanationTooltip';
-import { PromoteRuleButton } from '../components/PromoteRuleButton';
+import { formatCurrency } from '../lib/format';
+import { CATEGORY_OPTIONS } from '../lib/categories';
 import { UserRulesPanel } from '../components/UserRulesPanel';
-import { TransactionFlagsBadges } from '../components/Badges/TransactionFlagsBadges';
+import { TransactionsHeaderStrip } from '../components/transactions/TransactionsHeaderStrip';
+import { TransactionCard } from '../components/transactions/TransactionCard';
+import { groupTransactionsByDate } from '../lib/dateGrouping';
 
-type ApiTransaction = {
+export type ApiTransaction = {
   id: number;
   bookingDate: string | null;
   bookedAt?: string | null;
@@ -24,6 +22,8 @@ type ApiTransaction = {
   counterpartyIban?: string | null;
   purpose?: string | null;
   memo?: string | null;
+  displayName?: string; // Human-friendly short name (computed from payee/counterpartName/purpose/memo)
+  rawText?: string; // Full raw booking text (for detail views)
   category?: string | null;
   categorySource?: string | null;
   categoryConfidence?: number | null;
@@ -33,11 +33,14 @@ type ApiTransaction = {
   isInternalTransfer?: boolean;
   isPassThrough?: boolean;
   passThroughGroupId?: string | null;
-  internalTransferKind?: 'savings' | 'wallet' | 'other' | null;
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | 'payment_provider_funding' | null;
   internalTransferDirection?: 'in' | 'out' | null;
   isRefund?: boolean;
   isRefunded?: boolean;
   isReimbursement?: boolean;
+  reimbursementRole?: 'payer' | 'receiver' | null;
+  reimbursementGroupId?: string | null;
+  isCashWithdrawal?: boolean;
   transferLinkId?: string | null;
   source?: string | null;
   sourceProfile?: string | null;
@@ -50,11 +53,13 @@ type TransactionResponse = {
   transactions: ApiTransaction[];
 };
 
-type DisplayTransaction = ApiTransaction & { displayId: string; linkedCount?: number };
+export type DisplayTransaction = ApiTransaction & { displayId: string; linkedCount?: number };
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 50; // Increased from 25 for better UX - users see more transactions at once
 
 export const Transactions: React.FC = () => {
+  const navigate = useNavigate();
+  
   // Read initial filters from URL (only on first mount)
   const useTransactionUrlFilters = () => {
     const location = useLocation();
@@ -86,7 +91,30 @@ export const Transactions: React.FC = () => {
 
   const [items, setItems] = useState<ApiTransaction[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(0);
+  
+  // Read initial page from URL (default to 0)
+  const location = useLocation();
+  const initialPage = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const pageParam = params.get('page');
+    return pageParam ? Math.max(0, parseInt(pageParam, 10)) : 0;
+  }, [location.search]);
+  
+  const [page, setPage] = useState(initialPage);
+  const [loadedPages, setLoadedPages] = useState<Set<number>>(new Set([initialPage])); // Track which pages have been loaded
+  const [hasMore, setHasMore] = useState(false); // Track if there are more items to load
+  
+  // Sync page state with URL when it changes externally (e.g., browser back/forward)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const pageParam = params.get('page');
+    const urlPage = pageParam ? Math.max(0, parseInt(pageParam, 10)) : 0;
+    if (urlPage !== page) {
+      setPage(urlPage);
+      setLoadedPages(new Set([urlPage]));
+      setItems([]); // Clear items to trigger reload
+    }
+  }, [location.search, page]);
   const [showRulesPanel, setShowRulesPanel] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,8 +165,16 @@ export const Transactions: React.FC = () => {
           throw new Error('Transaktionen konnten nicht geladen werden.');
         }
         const json = (await res.json()) as TransactionResponse;
-        setItems((json.transactions ?? []).map(tx => ({ ...tx, bookingDate: tx.bookingDate ?? tx.bookedAt ?? null })));
+        const newItems = (json.transactions ?? []).map(tx => ({ ...tx, bookingDate: tx.bookingDate ?? tx.bookedAt ?? null }));
+        
+        // For pagination: always replace items for the current page
+        // This ensures we show the correct page when navigating via URL
+        setItems(newItems);
+        setLoadedPages(prev => new Set([...prev, page]));
+        
         setTotal(json.total ?? 0);
+        // Check if there are more items to load
+        setHasMore((page + 1) * PAGE_SIZE < (json.total ?? 0));
       } catch (err: any) {
         if (err.name === 'AbortError') return;
         setError(err?.message || 'Transaktionen konnten nicht geladen werden.');
@@ -150,7 +186,7 @@ export const Transactions: React.FC = () => {
     };
     void load();
     return () => controller.abort();
-  }, [query]);
+  }, [query, page]);
 
   // Helper to reload current page
   const reload = useCallback(async () => {
@@ -175,6 +211,12 @@ export const Transactions: React.FC = () => {
     event.preventDefault();
     setFilters(draftFilters);
     setPage(0);
+    setLoadedPages(new Set([0]));
+    setItems([]); // Clear items when filters change
+    // Update URL to reflect page reset
+    const params = new URLSearchParams(location.search);
+    params.delete('page');
+    navigate(`/transactions?${params.toString()}`, { replace: true });
   };
 
   const resetFilters = () => {
@@ -190,6 +232,10 @@ export const Transactions: React.FC = () => {
     setFilters(defaults);
     setDraftFilters(defaults);
     setPage(0);
+    setLoadedPages(new Set([0]));
+    setItems([]); // Clear items when filters change
+    // Update URL to reflect reset
+    navigate('/transactions', { replace: true });
   };
 
   const displayRows: DisplayTransaction[] = useMemo(() => {
@@ -220,9 +266,22 @@ export const Transactions: React.FC = () => {
     }
     
     // Apply "showOnlyOther" filter
+    // Cash withdrawals and internal transfers are never treated as Sonstiges
+    function isSonstiges(tx: ApiTransaction): boolean {
+      // Only treat as Sonstiges if:
+      // - legacy category is 'other' or 'other_review'
+      // - and it is NOT a cash withdrawal
+      // - and NOT an internal transfer
+      // - and NOT a reimbursement
+      if (tx.isCashWithdrawal) return false;
+      if (tx.isInternalTransfer) return false;
+      if (tx.isReimbursement) return false;
+      return tx.category === 'other' || tx.category === 'other_review';
+    }
+    
     let out = results;
     if (filters.showOnlyOther) {
-      out = out.filter(tx => tx.category === 'other' || tx.category === 'other_review');
+      out = out.filter(tx => isSonstiges(tx));
     }
     // Apply low-confidence review filter if enabled from URL on initial mount
     if (lowConfidenceReview) {
@@ -233,9 +292,21 @@ export const Transactions: React.FC = () => {
     }
     return out;
   }, [items, filters.showOnlyOther, lowConfidenceReview]);
+
+  // Group transactions by date for feed-style display
+  const dateGroups = useMemo(() => {
+    return groupTransactionsByDate(displayRows);
+  }, [displayRows]);
   
   const otherCount = useMemo(() => {
-    return items.filter(tx => tx.category === 'other' || tx.category === 'other_review').length;
+    // Count only actual Sonstiges (exclude cash withdrawals and internal transfers)
+    function isSonstiges(tx: ApiTransaction): boolean {
+      if (tx.isCashWithdrawal) return false;
+      if (tx.isInternalTransfer) return false;
+      if (tx.isReimbursement) return false;
+      return tx.category === 'other' || tx.category === 'other_review';
+    }
+    return items.filter(tx => isSonstiges(tx)).length;
   }, [items]);
 
   const handleOverrideApplied = useCallback(
@@ -319,14 +390,51 @@ export const Transactions: React.FC = () => {
     }
   }, [selectedIds, reload]);
 
+  const handleTimeFilterChange = useCallback((days: number | 'all') => {
+    if (days === 'all') {
+      const thisYear = new Date().getFullYear();
+      setFilters(prev => ({
+        ...prev,
+        startDate: `${thisYear}-01-01`,
+        endDate: '',
+      }));
+      setDraftFilters(prev => ({
+        ...prev,
+        startDate: `${thisYear}-01-01`,
+        endDate: '',
+      }));
+    } else {
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - days);
+      setFilters(prev => ({
+        ...prev,
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+      }));
+      setDraftFilters(prev => ({
+        ...prev,
+        startDate: startDate.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0],
+      }));
+    }
+    setPage(0);
+    setLoadedPages(new Set([0]));
+    setItems([]); // Clear items when filters change
+    // Update URL to reflect page reset
+    const params = new URLSearchParams(location.search);
+    params.delete('page');
+    navigate(`/transactions?${params.toString()}`, { replace: true });
+  }, [location.search, navigate]);
+
   return (
     <AppShell>
       <section className="flex flex-col gap-6">
-        <div className="flex flex-col gap-3 rounded-3xl border border-slate-200 bg-white px-5 py-5 shadow-sm transition-colors dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex flex-col gap-3 rounded-3xl border border-nf-border-subtle bg-nf-bg-card px-5 py-5 shadow-elevated">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">Transaktionen</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">
+              <h1 className="text-2xl font-semibold text-nf-text-main">Transaktionen</h1>
+              <p className="text-sm text-nf-text-muted">
                 Durchsuche und filtere deine importierten Buchungen.
               </p>
             </div>
@@ -344,7 +452,7 @@ export const Transactions: React.FC = () => {
           </div>
           <form
             onSubmit={handleFilterSubmit}
-            className="rounded-3xl border border-slate-200 bg-white p-5 shadow-soft dark:border-slate-800 dark:bg-slate-900"
+            className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 shadow-card"
           >
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <label className="flex flex-col gap-1 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -457,188 +565,124 @@ export const Transactions: React.FC = () => {
           </div>
         ) : null}
 
-        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-soft dark:border-slate-800 dark:bg-slate-900">
-          <div className="overflow-x-auto">
-            {lowConfidenceReview && (
-              <div className="px-4 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:border-amber-500/30">
-                Niedrige Confidence – zeige nur Buchungen mit geringer Zuverlässigkeit der Kategorie.
-              </div>
-            )}
-            <table className="min-w-full divide-y divide-slate-200 text-sm dark:divide-slate-800">
-              <thead className="bg-slate-100/80 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
-                <tr>
-                  <th className="px-4 py-3 text-left font-semibold w-10"><span className="sr-only">Select</span></th>
-                  <th className="px-4 py-3 text-left font-semibold">Datum</th>
-                  <th className="px-4 py-3 text-left font-semibold">Beschreibung</th>
-                  <th className="px-4 py-3 text-left font-semibold">Kategorie</th>
-                  <th className="px-4 py-3 text-right font-semibold">Betrag</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 text-slate-700 dark:divide-slate-800 dark:text-slate-200">
-                {loading ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-500 dark:text-slate-400">
-                      Lade Transaktionen…
-                    </td>
-                  </tr>
-                ) : displayRows.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="px-4 py-6 text-center text-slate-500 dark:text-slate-400">
-                      Keine Transaktionen gefunden.
-                    </td>
-                  </tr>
-                ) : (
-                  displayRows.map(tx => {
-                    const meta = getCategoryMeta(tx.category ?? undefined);
-                    const showInternal = Boolean(tx.isInternalTransfer || tx.transferLinkId);
-                    const rawMeta = (tx.metadata ?? undefined) as Record<string, unknown> | undefined;
-                    const reason =
-                      rawMeta && typeof rawMeta.paypalCategoryReason === 'string' ? (rawMeta.paypalCategoryReason as string) : null;
-                    const transferReasons =
-                      rawMeta && Array.isArray(rawMeta.transferReasons)
-                        ? (rawMeta.transferReasons as string[])
-                        : rawMeta && typeof rawMeta.transferReasons === 'string'
-                        ? (rawMeta.transferReasons as string).split(',').filter(Boolean)
-                        : null;
-                    const fingerprintInput =
-                      !tx.externalId && tx.bookingDate
-                        ? {
-                            bookingDate: tx.bookingDate ?? '',
-                            valueDate: tx.valueDate ?? tx.bookingDate ?? '',
-                            amountCents: tx.amountCents ?? Math.round((tx.amount ?? 0) * 100),
-                            currency: tx.currency ?? 'EUR',
-                            purpose: tx.purpose ?? tx.memo ?? '',
-                            counterpartName: tx.counterpart ?? tx.payee ?? null,
-                            accountIban: null,
-                          }
-                        : undefined;
-                    return (
-                      <tr key={tx.displayId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                        <td className="px-4 py-3 align-top">
-                          <input
-                            aria-label="Transaktion auswählen"
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-200 dark:border-slate-600 dark:focus:ring-indigo-500/30"
-                            checked={selectedIds.includes(tx.id)}
-                            onChange={e => toggleSelected(tx.id, e.target.checked)}
-                          />
-                        </td>
-                        <td className="px-4 py-3">{formatDate(tx.bookingDate ?? undefined)}</td>
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-slate-900 dark:text-slate-100">
-                            {tx.payee || tx.counterpart || tx.purpose || '—'}
-                          </div>
-                          {tx.memo && (
-                            <div className="text-xs text-slate-500 dark:text-slate-400">{tx.memo}</div>
-                          )}
-                          {reason ? (
-                            <div className="mt-1 text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                              Regel:&nbsp;{reason}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-col gap-2">
-                            <ExplanationTooltip
-                              explanationText={tx.categorizationReasonText}
-                              explanationCode={tx.categorizationReasonCode}
-                              isOther={tx.category === 'other' || tx.category === 'other_review'}
-                            >
-                              <span
-                                className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                                  tx.category === 'other' || tx.category === 'other_review'
-                                    ? 'ring-1 ring-amber-300 dark:ring-amber-500/50'
-                                    : ''
-                                }`}
-                                style={{ backgroundColor: meta.background, color: meta.color }}
-                              >
-                                {showInternal ? <Link2 className="h-3 w-3" /> : null}
-                                {meta.label}
-                              </span>
-                            </ExplanationTooltip>
-                            <div className="flex items-center gap-2">
-                              <TransactionFlagsBadges
-                                isPassThrough={tx.isPassThrough}
-                                isInternalTransfer={tx.isInternalTransfer}
-                                internalTransferKind={tx.internalTransferKind ?? null}
-                                internalTransferDirection={tx.internalTransferDirection ?? null}
-                              />
-                              {showInternal ? (
-                                <div className="text-[11px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                                  Interner Transfer
-                                  {tx.linkedCount && tx.linkedCount > 1 ? ` · ${tx.linkedCount} Buchungen` : ''}
-                                  {transferReasons && transferReasons.length
-                                    ? ` · ${transferReasons.join(', ')}`
-                                    : ''}
-                                </div>
-                              ) : null}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <CategoryControl
-                                id={tx.externalId ?? undefined}
-                                fingerprintInput={fingerprintInput}
-                                category={tx.category}
-                                categorySource={tx.categorySource}
-                                rawText={tx.purpose ?? tx.memo ?? null}
-                                merchant={tx.payee ?? tx.counterpart ?? null}
-                                onApplied={(_resolvedId, next) => handleOverrideApplied(tx.id, next)}
-                              />
-                              {/* Show "Merken" button for eligible transactions */}
-                              {tx.category &&
-                                tx.category !== 'other' &&
-                                tx.category !== 'other_review' &&
-                                !tx.isInternalTransfer &&
-                                !tx.isRefund &&
-                                !tx.isRefunded &&
-                                !tx.isReimbursement && (
-                                  <PromoteRuleButton
-                                    transactionId={tx.id}
-                                    category={tx.category}
-                                    merchant={tx.payee ?? tx.counterpart ?? null}
-                                    onSuccess={() => {
-                                      // Optionally refresh or update UI
-                                    }}
-                                  />
-                                )}
-                            </div>
-                          </div>
-                        </td>
-                        <td
-                          className={`px-4 py-3 text-right text-sm font-semibold ${
-                            tx.amount < 0 ? 'text-rose-600 dark:text-rose-300' : 'text-emerald-600 dark:text-emerald-300'
-                          } ${tx.isPassThrough ? 'opacity-70' : ''}`}
-                        >
-                          {formatCurrency(tx.amount)}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
+        {/* Header Strip */}
+        <TransactionsHeaderStrip
+          transactions={displayRows}
+          total={total}
+          filters={{
+            startDate: filters.startDate,
+            endDate: filters.endDate,
+            category: filters.category,
+          }}
+          onTimeFilterChange={handleTimeFilterChange}
+          loading={loading}
+        />
+
+        {/* Low confidence review banner */}
+        {lowConfidenceReview && (
+          <div className="rounded-3xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-200 dark:border-amber-500/30">
+            Niedrige Confidence – zeige nur Buchungen mit geringer Zuverlässigkeit der Kategorie.
           </div>
+        )}
+
+        {/* Transaction Feed */}
+        <div className="space-y-6">
+          {loading ? (
+            <div className="rounded-2xl border border-nf-border-subtle bg-nf-bg-card px-6 py-12 text-center text-nf-text-muted">
+              Lade Transaktionen…
+            </div>
+          ) : dateGroups.length === 0 ? (
+            <div className="rounded-2xl border border-nf-border-subtle bg-nf-bg-card px-6 py-12 text-center text-nf-text-muted">
+              Keine Transaktionen gefunden.
+            </div>
+          ) : (
+            dateGroups.map(group => (
+              <div key={group.dateKey} className="space-y-2">
+                {/* Date Header */}
+                <div className="flex items-center justify-between px-1 py-2 sticky top-0 bg-nf-bg-shell/80 backdrop-blur-sm z-10">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-nf-text-muted">
+                    {group.label}
+                  </div>
+                  <div className="text-[11px] text-nf-text-soft">
+                    {group.transactions.length} Buchung{group.transactions.length !== 1 ? 'en' : ''} ·{' '}
+                    {formatCurrency(group.netto)} netto
+                  </div>
+                </div>
+
+                {/* Transaction Cards */}
+                <div className="space-y-2">
+                  {group.transactions.map(tx => (
+                    <TransactionCard
+                      key={tx.displayId}
+                      transaction={tx}
+                      isSelected={selectedIds.includes(tx.id)}
+                      onSelect={toggleSelected}
+                      onCategoryChange={handleOverrideApplied}
+                      onNavigate={tx => {
+                        // Navigate to transaction detail if available, or keep current behavior
+                        if (tx.reimbursementGroupId) {
+                          navigate(`/review?focusReimbursementGroup=${encodeURIComponent(tx.reimbursementGroupId)}`);
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={() => setPage(prev => Math.max(prev - 1, 0))}
-            disabled={page === 0 || loading}
-            className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
-          >
-            Zurück
-          </button>
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            Seite {page + 1} von {totalPages}
-          </span>
-          <button
-            type="button"
-            onClick={() => setPage(prev => (prev + 1 < totalPages ? prev + 1 : prev))}
-            disabled={page + 1 >= totalPages || loading}
-            className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
-          >
-            Weiter
-          </button>
+        {/* Pagination / Load More */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {/* Left: Page info and back button (if not on first page) */}
+          <div className="flex items-center gap-3">
+            {page > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const newPage = Math.max(page - 1, 0);
+                  // Scroll to top when going back
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                  setPage(newPage);
+                  // Update URL
+                  const params = new URLSearchParams(location.search);
+                  if (newPage === 0) {
+                    params.delete('page');
+                  } else {
+                    params.set('page', newPage.toString());
+                  }
+                  navigate(`/transactions?${params.toString()}`, { replace: true });
+                }}
+                disabled={loading}
+                className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:text-white"
+              >
+                Zurück
+              </button>
+            )}
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {items.length} von {total} Buchungen
+              {totalPages > 1 && ` · Seite ${page + 1} von ${totalPages}`}
+            </span>
+          </div>
+
+          {/* Right: Load More button */}
+          {hasMore && (
+            <button
+              type="button"
+              onClick={() => {
+                const newPage = page + 1;
+                setPage(newPage);
+                // Update URL
+                const params = new URLSearchParams(location.search);
+                params.set('page', newPage.toString());
+                navigate(`/transactions?${params.toString()}`, { replace: true });
+              }}
+              disabled={loading}
+              className="rounded-full border border-nf-primary bg-nf-primary px-4 py-1.5 text-sm font-medium text-white transition hover:bg-nf-primary/90 hover:shadow-glow-primary disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? 'Lade...' : 'Weitere laden'}
+            </button>
+          )}
         </div>
       </section>
       {showRulesPanel && <UserRulesPanel onClose={() => setShowRulesPanel(false)} />}

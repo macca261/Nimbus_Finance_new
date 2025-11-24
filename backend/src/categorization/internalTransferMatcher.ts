@@ -256,6 +256,50 @@ export function classifySingleSidedSavingsTransfer(
 }
 
 /**
+ * Single-sided wallet top-up heuristic for internal transfers:
+ * If an outgoing card transaction contains "Wise, Bruxelles" (or similar), mark it as
+ * an internal wallet transfer. This handles Wise card top-ups where the user is loading
+ * money into their Wise wallet account.
+ * 
+ * Example text: "Kartenverfügung | Buchungstext: Wise, Bruxelles BE Karte Nr. ..."
+ */
+export function classifySingleSidedWalletTransfer(
+  row: NormalizedCanonicalRow,
+  config: InternalTransferMatchConfig = {},
+): NormalizedCanonicalRow | null {
+  const roleById = config.accountRoleById || {};
+  const roleByIban = config.accountRoleByIban || {};
+  if (row.isRefund || row.isRefunded || row.refundGroupId) return null;
+  if (row.isInternalTransfer || row.internalTransferGroupId) return null;
+  if (row.amountCents >= 0) return null; // only outgoing
+  
+  // Combine all text fields for analysis
+  const purposeText = (row.purpose ?? '').toUpperCase();
+  const memoText = (row.memo ?? '').toUpperCase();
+  const counterpartText = (row.counterpartName ?? '').toUpperCase();
+  const combinedText = normalizeText(`${purposeText} ${memoText} ${counterpartText}`);
+  
+  // Check for Wise wallet top-up pattern:
+  // - Must contain "WISE"
+  // - Must contain "BRUXELLES" or "BRUXELLES BE" (tolerant to punctuation/spacing)
+  const hasWise = /WISE/i.test(combinedText);
+  const hasBruxelles = /BRUXELLES/i.test(combinedText);
+  
+  if (!hasWise || !hasBruxelles) {
+    return null;
+  }
+  
+  // This is a Wise wallet top-up - mark as internal transfer
+  return {
+    ...row,
+    isInternalTransfer: true,
+    internalTransferDirection: 'out',
+    internalTransferKind: 'wallet',
+    internalTransferGroupId: row.internalTransferGroupId ?? `int_single_wallet_${row.publicId}`,
+  };
+}
+
+/**
  * Apply internal transfer flags to both rows in a match.
  * 
  * @param match - The internal transfer match

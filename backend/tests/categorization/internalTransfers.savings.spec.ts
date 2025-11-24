@@ -20,8 +20,8 @@ describe('Internal transfers – savings', () => {
   });
 
   it('pairs spending -> savings (both sides visible) and excludes from month summary', async () => {
-    const ins = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category)
-      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL)`);
+    const ins = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category, isCashWithdrawal)
+      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL, 0)`);
     const t1 = ins.run('2025-09-10', '2025-09-10', -50000, 'ÜBERTRAG AN TAGESGELD', 'Self', 'DE-SPEND-001', 'DE-SAVE-001', 'A', 'out', 'int-A', 'A-1').lastInsertRowid as number;
     const t2 = ins.run('2025-09-10', '2025-09-10', +50000, 'ÜBERTRAG VON GIRO', 'Self', 'DE-SAVE-001', 'DE-SPEND-001', 'B', 'in', 'int-B', 'B-1').lastInsertRowid as number;
 
@@ -50,8 +50,8 @@ describe('Internal transfers – savings', () => {
   });
 
   it('classifies single-sided spending -> savings by counterparty IBAN', async () => {
-    const ins = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category)
-      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL)`);
+    const ins = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category, isCashWithdrawal)
+      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL, 0)`);
     const t1 = ins.run('2025-10-01', '2025-10-01', -25000, 'ÜBERWEISUNG AN TAGESGELD', 'Self', 'DE-SPEND-001', 'DE-SAVE-001', 'A', 'out', 'int-A', 'A-2').lastInsertRowid as number;
 
     // Invoke endpoints to initialize
@@ -72,8 +72,8 @@ describe('Internal transfers – savings', () => {
   });
 
   it('does not mark external SEPA as internal transfer', async () => {
-    const ins = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category)
-      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL)`);
+    const ins = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category, isCashWithdrawal)
+      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL, 0)`);
     const t1 = ins.run('2025-11-01', '2025-11-01', -1999, 'UEBERWEISUNG MIETE EXTERN', 'Landlord', 'DE-SPEND-001', 'DE-EXTERNAL-123', 'A', 'out', 'int-A', 'A-3').lastInsertRowid as number;
 
     await request(app).get('/api/transactions?limit=10').expect(200);

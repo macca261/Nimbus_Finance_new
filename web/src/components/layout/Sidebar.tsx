@@ -14,6 +14,7 @@ import {
   UploadCloud,
   SlidersHorizontal,
   AlertCircle,
+  Trophy,
 } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import ThemeToggle from '../ThemeToggle';
@@ -32,8 +33,9 @@ const NAV_ITEMS = [
   { to: '/review', label: 'Überprüfung', icon: AlertCircle },
   { to: '/budgets', label: 'Budgets', icon: Target },
   { to: '/goals', label: 'Goals', icon: Sparkles },
-  { to: '/accounts', label: 'Accounts', icon: Wallet },
+  { to: '/wallet', label: 'Wallet', icon: Wallet },
   { to: '/insights', label: 'Insights', icon: LineChart },
+  { to: '/achievements', label: 'Erfolge', icon: Trophy },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 
@@ -59,31 +61,31 @@ export default function Sidebar({ status, open, onClose }: SidebarProps) {
         aria-hidden="true"
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 max-w-full transform flex-col border-r border-slate-200/70 bg-white/70 px-5 py-5 shadow-lg shadow-slate-900/5 backdrop-blur-md transition-transform dark:border-slate-800/70 dark:bg-slate-900/60 md:static md:z-auto md:w-60 md:translate-x-0 md:px-5 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 max-w-full transform flex-col border-r border-nf-border-subtle bg-nf-bg-sidebar px-5 py-5 shadow-xl transition-transform md:static md:z-auto md:w-64 md:translate-x-0 ${
           open ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
-        <header className="flex items-center justify-between">
+        <header className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-200">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-nf-primary/20 text-nf-primary">
               <span className="text-lg font-semibold">N</span>
             </div>
             <div>
-              <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">Nimbus Finance</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Personal Wealth OS</p>
+              <p className="text-sm font-semibold text-white">Nimbus Finance</p>
+              <p className="text-xs text-slate-400">Personal Wealth OS</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 md:hidden dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-900 ${classnames.focusRing}`}
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-full border border-nf-border-subtle text-slate-400 transition hover:bg-nf-bg-card md:hidden ${classnames.focusRing}`}
             aria-label="Navigation schließen"
           >
             <X className="h-4 w-4" />
           </button>
         </header>
 
-        <nav className="mt-8 flex-1 space-y-1.5">
+        <nav className="flex-1 space-y-1.5">
           {NAV_ITEMS.map(item => {
             const active = pathname === item.to;
             const Icon = item.icon;
@@ -92,18 +94,13 @@ export default function Sidebar({ status, open, onClose }: SidebarProps) {
                 key={item.to}
                 to={item.to}
                 onClick={onClose}
-                className={`group relative flex items-center gap-3 rounded-xl border px-3.5 py-2 text-sm font-medium transition ${classnames.focusRing} ${
+                className={`group flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition ${classnames.focusRing} ${
                   active
-                    ? 'border-indigo-300/80 bg-white text-indigo-700 dark:border-indigo-500/40 dark:bg-slate-900/80 dark:text-indigo-100'
-                    : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-slate-100/70 dark:text-slate-300 dark:hover:border-slate-700 dark:hover:bg-slate-900/60'
+                    ? 'bg-nf-primary text-white shadow-lg shadow-nf-primary/20'
+                    : 'text-slate-300 hover:bg-nf-bg-card hover:text-white'
                 }`}
                 aria-current={active ? 'page' : undefined}
               >
-                <span
-                  className={`absolute inset-y-2 left-0 w-1 rounded-full transition ${
-                    active ? 'bg-indigo-500' : 'bg-transparent group-hover:bg-indigo-200 dark:group-hover:bg-indigo-400/40'
-                  }`}
-                />
                 <Icon className="h-4 w-4" />
                 <span>{item.label}</span>
               </Link>
@@ -111,16 +108,16 @@ export default function Sidebar({ status, open, onClose }: SidebarProps) {
           })}
 
           <div className="mt-6 space-y-1.5">
-            <p className="px-3.5 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            <p className="px-3 text-xs font-medium uppercase tracking-wide text-slate-500">
               Settings
             </p>
             <Link
               to="/settings/normalizer"
               onClick={onClose}
-              className={`flex items-center gap-3 rounded-xl px-3.5 py-2 text-sm transition ${classnames.focusRing} ${
+              className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${classnames.focusRing} ${
                 pathname === '/settings/normalizer'
-                  ? 'bg-indigo-50 text-indigo-700 dark:bg-slate-900/80 dark:text-indigo-200'
-                  : 'text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-900/60'
+                  ? 'bg-nf-primary text-white'
+                  : 'text-slate-300 hover:bg-nf-bg-card hover:text-white'
               }`}
               aria-current={pathname === '/settings/normalizer' ? 'page' : undefined}
             >
@@ -130,16 +127,16 @@ export default function Sidebar({ status, open, onClose }: SidebarProps) {
           </div>
 
           <div className="mt-6 space-y-1.5">
-            <p className="px-3.5 text-xs font-medium uppercase tracking-wide text-slate-400 dark:text-slate-500">
+            <p className="px-3 text-xs font-medium uppercase tracking-wide text-slate-500">
               Admin
             </p>
             <Link
               to="/admin/imports"
               onClick={onClose}
-              className={`flex items-center gap-3 rounded-xl px-3.5 py-2 text-sm transition ${classnames.focusRing} ${
+              className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${classnames.focusRing} ${
                 pathname === '/admin/imports'
-                  ? 'bg-indigo-50 text-indigo-700 dark:bg-slate-900/80 dark:text-indigo-200'
-                  : 'text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-900/60'
+                  ? 'bg-nf-primary text-white'
+                  : 'text-slate-300 hover:bg-nf-bg-card hover:text-white'
               }`}
               aria-current={pathname === '/admin/imports' ? 'page' : undefined}
             >
@@ -149,14 +146,42 @@ export default function Sidebar({ status, open, onClose }: SidebarProps) {
           </div>
         </nav>
 
-        <section className="mt-4 space-y-4 rounded-xl border border-slate-200/70 bg-white/60 p-4 dark:border-slate-800/70 dark:bg-slate-900/60">
-          <div className="flex items-center justify-between text-xs font-medium text-slate-500 dark:text-slate-400">
+        {/* Upgrade to Pro Card */}
+        <div className="mt-auto mb-6 rounded-2xl border border-nf-primary/20 bg-gradient-to-br from-nf-primary/10 to-nf-primary/5 p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-nf-primary/20 text-nf-primary">
+              <Sparkles className="h-4 w-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-white mb-1">Upgrade to Pro</p>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Erweiterte Analysen, unbegrenzte Konten und mehr.
+              </p>
+              <button
+                type="button"
+                className="mt-3 w-full rounded-lg bg-nf-primary px-3 py-1.5 text-xs font-medium text-white transition hover:bg-nf-primary/90"
+              >
+                Jetzt upgraden
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Status & User Footer */}
+        <div className="space-y-3 border-t border-nf-border-subtle pt-4">
+          <div className="flex items-center justify-between text-xs font-medium text-slate-400">
             <span className="inline-flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-slate-400" />
+              <ShieldCheck className="h-3.5 w-3.5" />
               Systemstatus
             </span>
-            <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] ${statusTone}`}>
-              <span className="inline-block h-2 w-2 rounded-full bg-current" />
+            <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] ${
+              status === 'online'
+                ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
+                : status === 'offline'
+                ? 'border-rose-500/30 text-rose-400 bg-rose-500/10'
+                : 'border-slate-500/30 text-slate-400 bg-slate-500/10'
+            }`}>
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
               {statusLabel}
             </span>
           </div>
@@ -164,27 +189,24 @@ export default function Sidebar({ status, open, onClose }: SidebarProps) {
             <ThemeToggle />
             <button
               type="button"
-              className={`inline-flex items-center gap-1 rounded-lg border border-transparent px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:border-slate-200 hover:text-slate-800 dark:text-slate-300 dark:hover:border-slate-700 dark:hover:text-slate-100 ${classnames.focusRing}`}
+              className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-slate-400 transition hover:text-white ${classnames.focusRing}`}
             >
               <Power className="h-3.5 w-3.5" />
-              Logout
+              <span className="hidden sm:inline">Logout</span>
             </button>
           </div>
-        </section>
-
-        <footer className="mt-5 rounded-xl border border-slate-200/70 bg-white/70 px-4 py-4 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/60">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-200">
+          <div className="flex items-center gap-3 pt-2 border-t border-nf-border-subtle">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-nf-primary/20 text-nf-primary text-xs font-semibold">
               NU
             </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">Nimbus Nutzer</p>
-              <span className="mt-1 inline-flex items-center gap-1 rounded-md border border-indigo-200/70 px-2 py-0.5 text-[11px] font-medium text-indigo-600 dark:border-indigo-500/40 dark:text-indigo-200">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold text-white">Nimbus Nutzer</p>
+              <span className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-nf-primary bg-nf-primary/10">
                 Premium
               </span>
             </div>
           </div>
-        </footer>
+        </div>
       </aside>
     </>
   );

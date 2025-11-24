@@ -69,6 +69,7 @@ const CATEGORY_MAPPING: Record<string, CategoryId> = {
   'dining:delivery': 'delivery',
   'dining:cafe': 'dining_out',
   'dining:bakery': 'dining_out',
+  'dining:fast_food': 'dining_out',
 
   transport: 'transport',
   'transport:public': 'transport',
@@ -86,6 +87,7 @@ const CATEGORY_MAPPING: Record<string, CategoryId> = {
   'shopping:electronics': 'shopping',
   'shopping:home': 'shopping',
   'shopping:home_improvement': 'shopping',
+  'shopping:discount_store': 'shopping',
   'shopping:online': 'shopping',
 
   health: 'health',
@@ -117,6 +119,8 @@ const CATEGORY_MAPPING: Record<string, CategoryId> = {
   'travel:holiday': 'other',
 
   charity: 'other',
+
+  'cash:withdrawal': 'cash_withdrawal',
 
   other: 'other',
   uncategorized: 'other',

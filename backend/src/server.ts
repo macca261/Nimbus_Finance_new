@@ -7,7 +7,7 @@ import { insertManyTransactions, type InsertRow } from './insert';
 import { evaluateAll } from './services/achievements';
 import summaryRouter from './routes/summary';
 import { categorize } from './categorization';
-import achievementsRouter from './routes/achievements';
+import { achievementsRouter } from './routes/achievements';
 import { importRouter } from './routes/import';
 import { paypalRouter } from './routes/paypal';
 import { overridesRouter } from './routes/overrides';
@@ -21,6 +21,11 @@ import debugRouter from './routes/debug';
 import { accountsRouter } from './routes/accounts';
 import { mountReviewRoutes } from './routes/review';
 import { mountCategoryRoutes } from './routes/categories';
+import { mountSubscriptionRoutes } from './routes/subscriptions';
+import { budgetsRouter } from './routes/budgets';
+import { goalsRouter } from './routes/goals';
+import { questsRouter } from './routes/quests';
+import coachRouter from './routes/coach';
 import os from 'node:os';
 import fs from 'node:fs';
 import { decodeCsvBuffer } from './lib/text';
@@ -182,10 +187,19 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   app.use('/api/normalizer', normalizerRouter);
   app.use('/api/debug', debugRouter);
   app.use('/api/admin/imports', adminImportsRouter);
+  app.use('/api/budgets', budgetsRouter);
+  app.use('/api/goals', goalsRouter);
+  app.use('/api/quests', questsRouter);
+  app.use('/api/coach', coachRouter);
   mountReviewRoutes(app);
   console.log('Mounted: /api/review/transactions');
+  mountSubscriptionRoutes(app);
+  console.log('Mounted: /api/subscriptions');
   mountCategoryRoutes(app);
   console.log('Mounted: /api/categories');
+  const aiCategoryRouter = require('./routes/aiCategory').default;
+  app.use('/api/ai', aiCategoryRouter);
+  console.log('Mounted: /api/ai');
   mountAdminRoutes(app);
   if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
     app.use('/api', devResetRouter);
@@ -195,6 +209,7 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   console.log('Mounted: /api/summary/*');
   console.log('Mounted: /api/achievements');
   console.log('Mounted: /api/import');
+  console.log('Mounted: /api/quests');
   console.log('Mounted: /api/transactions');
   console.log('Mounted: /api/dashboard');
 

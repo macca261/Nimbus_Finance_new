@@ -4,6 +4,7 @@ import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { applyCategoryFeedback, getTransactionById, insertOverrideRule, getAllOverrideRules, deleteOverrideRule, applyOverrideRuleToExistingTransactions } from '../db';
 import { isValidCategory } from '../config/categories';
 import { buildCategorizationExplanation } from '../categorization/explanation';
+import { computeTransactionDisplayName } from '../lib/transactions/displayName';
 import crypto from 'node:crypto';
 
 const filePath = process.env.NIMBUS_DB_PATH || process.env.DB_FILE || 'nimbus.db';
@@ -56,8 +57,26 @@ type QueryRow = {
   bankReferenceId: string | null;
   isPassThrough: number | null;
   passThroughGroupId: string | null;
+  isCashWithdrawal: number | null;
   raw: string | null;
 };
+
+/**
+ * Map legacy category for a transaction row, applying overrides based on flags.
+ * 
+ * Cash withdrawals are always reported as 'cash_withdrawal' regardless of DB category.
+ * This ensures that even legacy/stale rows with category='other' are correctly
+ * reported as cash withdrawals in the API.
+ */
+function mapLegacyCategoryForRow(row: QueryRow): string {
+  // If the cash flag is set, force legacy category to cash_withdrawal
+  if (row.isCashWithdrawal) {
+    return 'cash_withdrawal';
+  }
+  
+  // Return the DB category as-is (may be null, empty, 'other', etc.)
+  return row.category ?? '';
+}
 
 function parseAmount(value: unknown): QueryNumber {
   if (typeof value !== 'string' || value.trim().length === 0) return null;
@@ -153,6 +172,7 @@ transactionsRouter.get('/', (req, res) => {
           bankReferenceId,
           isPassThrough,
           passThroughGroupId,
+          isCashWithdrawal,
           raw
         FROM transactions
         ${whereSql}
@@ -191,7 +211,7 @@ transactionsRouter.get('/', (req, res) => {
         memo,
         accountIban: row.accountIban,
         bankProfile: row.bankProfile,
-        category: row.category,
+        category: mapLegacyCategoryForRow(row),
         categorySource: row.categorySource,
         categoryConfidence: row.categoryConfidence,
         categoryExplanation: row.categoryExplanation,
@@ -206,7 +226,13 @@ transactionsRouter.get('/', (req, res) => {
               row.category === 'transfer_internal' ||
               (row.category ? row.category.startsWith('internal') : false),
           ),
-        rawText: memo,
+        displayName: computeTransactionDisplayName({
+          counterpartName: row.counterpart,
+          payee,
+          purpose: row.purpose,
+          memo,
+        }),
+        rawText: memo || row.purpose || '',
         externalId: row.externalId,
         referenceId: row.referenceId,
         metadata,
@@ -223,6 +249,7 @@ transactionsRouter.get('/', (req, res) => {
         bankReferenceId: row.bankReferenceId ?? null,
         isPassThrough: Boolean(row.isPassThrough),
         passThroughGroupId: row.passThroughGroupId ?? null,
+        isCashWithdrawal: Boolean(row.isCashWithdrawal),
       };
       
       // Add categorization explanation
@@ -279,6 +306,11 @@ transactionsRouter.get('/recent', (req, res) => {
           referenceId,
           isPassThrough,
           passThroughGroupId,
+          isCashWithdrawal,
+          isReimbursement,
+          reimbursementRole,
+          reimbursementGroupId,
+          reimbursementShareRatio,
           raw
         FROM transactions
         ORDER BY datetime(bookingDate) DESC, id DESC
@@ -316,7 +348,7 @@ transactionsRouter.get('/recent', (req, res) => {
         memo,
         accountIban: row.accountIban,
         bankProfile: row.bankProfile,
-        category: row.category,
+        category: mapLegacyCategoryForRow(row),
         categorySource: row.categorySource,
         categoryConfidence: row.categoryConfidence,
         categoryExplanation: row.categoryExplanation,
@@ -334,20 +366,27 @@ transactionsRouter.get('/recent', (req, res) => {
         internalTransferDirection: row.internalTransferDirection ?? null,
         internalTransferKind: row.internalTransferKind ?? null,
         internalTransferGroupId: row.internalTransferGroupId ?? null,
-        rawText: memo,
+        displayName: computeTransactionDisplayName({
+          counterpartName: row.counterpart,
+          payee,
+          purpose: row.purpose,
+          memo,
+        }),
+        rawText: memo || row.purpose || '',
         externalId: row.externalId,
         referenceId: row.referenceId,
         metadata,
         isRefund: Boolean(row.isRefund),
         isRefunded: Boolean(row.isRefunded),
         refundGroupId: row.refundGroupId ?? null,
-        isReimbursement: Boolean(row.isReimbursement),
+        isReimbursement: Boolean(row.isReimbursement ?? false),
         reimbursementRole: row.reimbursementRole ?? null,
         reimbursementGroupId: row.reimbursementGroupId ?? null,
         reimbursementShareRatio: row.reimbursementShareRatio ?? null,
         bankReferenceId: row.bankReferenceId ?? null,
         isPassThrough: Boolean(row.isPassThrough),
         passThroughGroupId: row.passThroughGroupId ?? null,
+        isCashWithdrawal: Boolean(row.isCashWithdrawal),
       };
       
       // Add categorization explanation

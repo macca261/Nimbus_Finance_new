@@ -16,11 +16,13 @@ type DashboardBalanceChartProps = {
   balance: DashboardSummary['balanceOverTime'];
   cashflow: DashboardSummary['cashflowByMonth'];
   loading?: boolean;
+  noCard?: boolean;
+  noHeader?: boolean;
 };
 
 type ViewMode = 'balance' | 'cashflow';
 
-export const DashboardBalanceChart: React.FC<DashboardBalanceChartProps> = ({ balance, cashflow, loading }) => {
+export const DashboardBalanceChart: React.FC<DashboardBalanceChartProps> = ({ balance, cashflow, loading, noCard, noHeader }) => {
   const [view, setView] = useState<ViewMode>('balance');
 
   const balanceData = useMemo(
@@ -32,17 +34,19 @@ export const DashboardBalanceChart: React.FC<DashboardBalanceChartProps> = ({ ba
     [balance],
   );
 
-  return (
-    <div className="flex h-full flex-col rounded-2xl border border-slate-100 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:p-6">
-      <header className="mb-4 flex items-center justify-between">
-        <div>
-          <h3 className="text-base font-medium text-slate-900 dark:text-slate-100 md:text-lg">Saldo & Cashflow</h3>
-        </div>
-        <div className="flex rounded-full border border-slate-200 bg-slate-100/60 p-1 text-xs font-medium dark:border-slate-700 dark:bg-slate-900/60">
-          <ToggleButton active={view === 'balance'} label="Saldo" onClick={() => setView('balance')} />
-          <ToggleButton active={view === 'cashflow'} label="Cashflow" onClick={() => setView('cashflow')} />
-        </div>
-      </header>
+  const content = (
+    <>
+      {!noHeader && (
+        <header className="mb-4 flex items-center justify-between">
+          <div className="space-y-1">
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Saldo & Cashflow</h3>
+          </div>
+          <div className="flex rounded-full border border-slate-200 bg-slate-100/60 p-1 text-xs font-medium dark:border-slate-700 dark:bg-slate-900/60">
+            <ToggleButton active={view === 'balance'} label="Saldo" onClick={() => setView('balance')} />
+            <ToggleButton active={view === 'cashflow'} label="Cashflow" onClick={() => setView('cashflow')} />
+          </div>
+        </header>
+      )}
       <div className="flex-1">
         {view === 'balance' ? (
           <BalanceAreaChart data={balanceData} loading={loading} />
@@ -50,6 +54,16 @@ export const DashboardBalanceChart: React.FC<DashboardBalanceChartProps> = ({ ba
           <CashflowChart data={cashflow} />
         )}
       </div>
+    </>
+  );
+
+  if (noCard) {
+    return <div className="flex h-full min-h-[260px] flex-col">{content}</div>;
+  }
+
+  return (
+    <div className="flex h-full min-h-[260px] flex-col rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-4 shadow-elevated dark:shadow-elevated sm:p-5 lg:p-6">
+      {content}
     </div>
   );
 };
@@ -70,22 +84,28 @@ function BalanceAreaChart({ data, loading }: { data: { date: string; balance: nu
     );
   }
   return (
-    <div className="h-64 w-full">
+    <div className="flex min-h-[260px] w-full items-center justify-center sm:h-64">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 12, right: 24, left: 0, bottom: 8 }}>
+        <AreaChart data={data} margin={{ top: 12, right: 12, left: 0, bottom: 8 }} className="sm:!mr-6">
           <defs>
             <linearGradient id="dashboardBalanceGradient" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#5B8DEF" stopOpacity={0.35} />
               <stop offset="100%" stopColor="#5B8DEF" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-          <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#64748B' }} tickLine={false} axisLine={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#CBD5E1" />
+          <XAxis 
+            dataKey="date" 
+            tick={{ fontSize: 10 }} 
+            tickLine={false} 
+            axisLine={false}
+            className="text-xs text-slate-500 dark:text-slate-400"
+          />
           <YAxis
-            width={64}
-            tick={{ fontSize: 10, fill: '#64748B' }}
+            width={56}
+            tick={{ fontSize: 10 }}
             tickFormatter={value => formatCurrency(Number(value)).replace('€', '')}
-            className="tabular-nums"
+            className="tabular-nums text-xs text-slate-500 dark:text-slate-400 sm:w-16"
           />
           <Tooltip
             contentStyle={{

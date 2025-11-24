@@ -122,6 +122,33 @@ export default function CategoryControl(props: Props) {
     }
   };
 
+  // Sort categories alphabetically, keeping "Sonstiges" at the bottom
+  const sortedOptions = useMemo(() => {
+    if (!CATEGORY_OPTIONS) return [];
+
+    const pinnedIds = new Set<string>([
+      // Optionally pin certain categories at the top
+      // 'groceries', 'rent', 'income_salary',
+    ]);
+
+    const pinned = CATEGORY_OPTIONS.filter(o => pinnedIds.has(o.id));
+    const rest = CATEGORY_OPTIONS.filter(o => !pinnedIds.has(o.id));
+
+    rest.sort((a, b) => {
+      const metaA = getCategoryMeta(a.id);
+      const metaB = getCategoryMeta(b.id);
+      return metaA.label.localeCompare(metaB.label, 'de', { sensitivity: 'base' });
+    });
+
+    // Keep "Sonstiges" (id: 'other') at the very bottom
+    const withoutOther = rest.filter(o => o.id !== 'other');
+    const otherOption = rest.find(o => o.id === 'other');
+
+    return otherOption
+      ? [...pinned, ...withoutOther, otherOption]
+      : [...pinned, ...rest];
+  }, []);
+
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2">
@@ -134,7 +161,7 @@ export default function CategoryControl(props: Props) {
           <option value="" disabled>
             — Kategorie wählen —
           </option>
-          {CATEGORY_OPTIONS.map(option => {
+          {sortedOptions.map(option => {
             const meta = getCategoryMeta(option.id);
             return (
               <option key={option.id} value={option.id}>

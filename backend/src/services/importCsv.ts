@@ -66,7 +66,24 @@ export function persistTransactions(input: {
   }
 
   const connection = input.db ?? defaultDb;
-  const { inserted, duplicates } = insertTransactions(canonicalRows, connection);
+  
+  // Insert transactions - wrap in try-catch to handle any errors gracefully
+  let inserted = 0;
+  let duplicates = 0;
+  try {
+    const result = insertTransactions(canonicalRows, connection);
+    inserted = result.inserted;
+    duplicates = result.duplicates;
+  } catch (error: any) {
+    // If insertTransactions fails, log and return diagnostics with error
+    console.error('[importCsv] insertTransactions failed', {
+      error: error?.message || String(error),
+      rowCount: canonicalRows.length,
+      stack: error?.stack,
+    });
+    // Re-throw to let the import route handle it
+    throw new Error(`Failed to insert transactions: ${error?.message || 'Unknown error'}`);
+  }
 
   if (duplicates > 0) {
     reasons.push(`${duplicates} Transaction(s) were skipped as duplicates.`);

@@ -473,6 +473,24 @@ export function categorizeWithRules(
     baseCategorized.categoryHint = normalizerResult.categoryHint;
   }
 
+  // Hard override for cash withdrawals: always assign cash:withdrawal category and stop
+  const applyCashWithdrawalOverride = (): CategorizedTransaction | null => {
+    if (!(row as any).isCashWithdrawal) return null;
+    return {
+      ...baseCategorized,
+      category: 'cash:withdrawal',
+      categorySource: 'system',
+      categoryConfidence: 0.95,
+      categoryExplanation: {
+        ruleId: 'cash_withdrawal:auto',
+      },
+    };
+  };
+  const cashWithdrawalOverride = applyCashWithdrawalOverride();
+  if (cashWithdrawalOverride) {
+    return cashWithdrawalOverride;
+  }
+
   // Hard override for internal transfers: always assign internal categories and stop
   const applyInternalTransferOverride = (): CategorizedTransaction | null => {
     if (!(row as any).isInternalTransfer) return null;

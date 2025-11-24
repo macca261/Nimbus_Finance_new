@@ -22,8 +22,8 @@ describe('Real-world transfers – guard against Transport', () => {
     db.prepare(`INSERT INTO accounts (id, iban, name, role) VALUES (?, ?, ?, ?)`).run('SAVE-A', 'DE32200411770270381700', 'Savings', 'savings');
 
     // Insert single-sided outgoing transfer from spending to savings IBAN
-    const stmt = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category)
-      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL)`);
+    const stmt = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category, isCashWithdrawal)
+      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL, 0)`);
     const text = 'Übertrag / Überweisung | Empfänger: Aaron McIntoshKto/IBAN: DE32200411770270381700 BLZ/BIC: COBAD... Ref. ...';
     const id = stmt.run('2025-11-05', '2025-11-05', -12345, text, 'Aaron McIntosh', 'DE-SPEND-A', 'DE32200411770270381700', 'SPEND-A', 'out', 'int', 'tx-1').lastInsertRowid as number;
 
@@ -42,8 +42,8 @@ describe('Real-world transfers – guard against Transport', () => {
 
   it('does not classify partner transfer as Transport if IBAN is unknown', async () => {
     db.prepare(`INSERT INTO accounts (id, iban, name, role) VALUES (?, ?, ?, ?)`).run('SPEND-B', 'DE-SPEND-B', 'Spending B', 'spending');
-    const stmt = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category)
-      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL)`);
+    const stmt = db.prepare(`INSERT INTO transactions (bookingDate, valueDate, amountCents, currency, purpose, counterpartName, accountIban, counterpartyIban, rawCode, accountId, direction, bankProfile, publicId, source, sourceProfile, category, isCashWithdrawal)
+      VALUES (?, ?, ?, 'EUR', ?, ?, ?, ?, NULL, ?, ?, 'comdirect', ?, 'manual', 'comdirect', NULL, 0)`);
     const text = 'Übertrag / Überweisung | Empfänger: Rukiye AksoyKto/IBAN: DE1234567890 BLZ/BIC: ANYBANK Ref. ...';
     const id = stmt.run('2025-11-06', '2025-11-06', -5000, text, 'Rukiye Aksoy', 'DE-SPEND-B', 'DE1234567890', 'SPEND-B', 'out', 'int', 'tx-2').lastInsertRowid as number;
 

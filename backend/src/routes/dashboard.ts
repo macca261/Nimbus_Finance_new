@@ -128,7 +128,13 @@ dashboardRouter.get('/', (req, res) => {
         COALESCE(SUM(CASE WHEN amountCents > 0 THEN amountCents ELSE 0 END), 0) AS income,
         COALESCE(SUM(CASE WHEN amountCents < 0 THEN amountCents ELSE 0 END), 0) AS expenses
        FROM transactions
-       WHERE bookingDate BETWEEN ? AND ?`,
+       WHERE bookingDate BETWEEN ? AND ?
+         AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+         AND (isRefund = 0 OR isRefund IS NULL)
+         AND (isRefunded = 0 OR isRefunded IS NULL)
+         AND (isPassThrough = 0 OR isPassThrough IS NULL)
+         AND (isCashWithdrawal = 0 OR isCashWithdrawal IS NULL)
+         AND (isReimbursement = 0 OR isReimbursement IS NULL)`,
     )
     .get(from30d, referenceDate) as { income: number; expenses: number };
 
@@ -137,6 +143,12 @@ dashboardRouter.get('/', (req, res) => {
       `SELECT category AS categoryId, COALESCE(SUM(-amountCents), 0) AS sum
        FROM transactions
        WHERE amountCents < 0
+         AND (isInternalTransfer = 0 OR isInternalTransfer IS NULL)
+         AND (isRefund = 0 OR isRefund IS NULL)
+         AND (isRefunded = 0 OR isRefunded IS NULL)
+         AND (isPassThrough = 0 OR isPassThrough IS NULL)
+         AND (isCashWithdrawal = 0 OR isCashWithdrawal IS NULL)
+         AND (isReimbursement = 0 OR isReimbursement IS NULL)
        GROUP BY category`,
     )
     .all() as Array<{ categoryId: string | null; sum: number }>;
