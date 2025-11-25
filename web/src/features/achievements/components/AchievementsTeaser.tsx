@@ -3,8 +3,13 @@ import { Link } from 'react-router-dom';
 import { Trophy, ArrowRight } from 'lucide-react';
 import { useAchievements } from '../../../hooks/useAchievements';
 import type { Achievement } from '../../../types/achievements';
+import clsx from 'clsx';
 
-export const AchievementsTeaser: React.FC = () => {
+interface AchievementsTeaserProps {
+  isFresh?: boolean;
+}
+
+export const AchievementsTeaser: React.FC<AchievementsTeaserProps> = ({ isFresh = false }) => {
   const { achievements, isLoading } = useAchievements();
 
   const featuredAchievements = useMemo(() => {
@@ -67,7 +72,16 @@ export const AchievementsTeaser: React.FC = () => {
   };
 
   return (
-    <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card shadow-elevated p-5">
+    <div
+      className={clsx(
+        'rounded-3xl border border-nf-border-subtle bg-nf-bg-card shadow-elevated p-5',
+        'transition-all duration-200 ease-out',
+        'hover:scale-[1.01] hover:shadow-lg',
+        'motion-reduce:transform-none motion-reduce:shadow-none',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card',
+        isFresh && 'animate-[nimbusPulse_1.5s_ease-out_0s_3]'
+      )}
+    >
       <div className="flex items-center gap-2 mb-4">
         <Trophy className="h-5 w-5 text-nf-primary" />
         <h3 className="text-sm font-semibold text-nf-text-main">Deine Erfolge</h3>

@@ -8,6 +8,7 @@ import { ReimbursementsReviewCard } from '../components/review/ReimbursementsRev
 import { SonstigesTransactionRow, type AiSuggestionData } from '../components/review/SonstigesTransactionRow';
 import { AiCleanupSummaryBar } from '../components/review/AiCleanupSummaryBar';
 import CategoryControl from '../components/CategoryControl';
+import { TransactionExplanationPanel } from '../features/transactions/components/TransactionExplanationPanel';
 import { formatCurrency } from '../lib/format';
 import { getTransactionDisplayName } from '../lib/transactions/displayName';
 import { useBatchAiSuggestions } from '../hooks/useBatchAiSuggestions';
@@ -1250,36 +1251,22 @@ export default function ReviewPage() {
 }
 
 function WhyButton({ tx }: { tx: ReviewTransaction }) {
-  const explanation = tx.categoryExplanation;
-  if (!explanation) {
-    return (
-      <span className="text-[11px] text-slate-400 dark:text-slate-500 italic">
-        Keine Details
-      </span>
-    );
-  }
+  const [showExplanation, setShowExplanation] = React.useState(false);
 
   return (
-    <details className="group">
-      <summary className="cursor-pointer text-[11px] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 underline-offset-2 hover:underline list-none">
+    <>
+      <button
+        type="button"
+        onClick={() => setShowExplanation(!showExplanation)}
+        className="cursor-pointer text-[11px] text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 underline-offset-2 hover:underline"
+      >
         Warum?
-      </summary>
-      <div className="mt-1 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2 shadow-sm max-w-xs">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-1">
-          Regel
+      </button>
+      {showExplanation && (
+        <div className="mt-2">
+          <TransactionExplanationPanel transactionId={tx.id} />
         </div>
-        <div className="text-xs text-slate-800 dark:text-slate-200 mb-1">
-          <span className="font-mono text-[11px] bg-slate-50 dark:bg-slate-900 px-1 py-0.5 rounded">
-            {explanation.ruleId}
-          </span>
-        </div>
-        {explanation.matchedText && (
-          <div className="text-[11px] text-slate-600 dark:text-slate-300">
-            <span className="font-semibold">Fundstelle:&nbsp;</span>
-            {explanation.matchedText}
-          </div>
-        )}
-      </div>
-    </details>
+      )}
+    </>
   );
 }

@@ -164,5 +164,53 @@ describe('CoachStoryCard', () => {
     await user.click(retryButton);
     expect(onRefresh).toHaveBeenCalledTimes(1);
   });
+
+  it('shows "Neu" pill when isFresh is true', () => {
+    const storyResponse: CoachStoryResponse = {
+      story: {
+        title: 'Dein Monat in kurzen Worten',
+        insights: ['Insight 1'],
+        actions: [],
+      },
+    };
+
+    renderWithRouter(
+      <CoachStoryCard storyResponse={storyResponse} isLoading={false} isFresh={true} />
+    );
+
+    expect(screen.getByText('Neu')).toBeInTheDocument();
+  });
+
+  it('does not show "Neu" pill when isFresh is false', () => {
+    const storyResponse: CoachStoryResponse = {
+      story: {
+        title: 'Dein Monat in kurzen Worten',
+        insights: ['Insight 1'],
+        actions: [],
+      },
+    };
+
+    renderWithRouter(
+      <CoachStoryCard storyResponse={storyResponse} isLoading={false} isFresh={false} />
+    );
+
+    expect(screen.queryByText('Neu')).not.toBeInTheDocument();
+  });
+
+  it('does not show "Neu" pill when isFresh is undefined', () => {
+    const storyResponse: CoachStoryResponse = {
+      story: {
+        title: 'Dein Monat in kurzen Worten',
+        insights: ['Insight 1'],
+        actions: [],
+      },
+    };
+
+    renderWithRouter(
+      <CoachStoryCard storyResponse={storyResponse} isLoading={false} />
+    );
+
+    expect(screen.queryByText('Neu')).not.toBeInTheDocument();
+  });
 });
 

@@ -1,71 +1,76 @@
 /**
  * Sparkasse CSV Import Strategy
  * 
- * Handles Sparkasse CSV exports with:
- * - Semicolon delimiter
- * - ISO-8859-1 encoding (critical for Umlauts)
- * - German number format (1.000,50)
- * - German date format (DD.MM.YY)
+ * Detects Sparkasse CSV exports by headers:
+ * - "Begünstigter/Zahlungspflichtiger"
+ * - "Valutadatum"
+ * 
+ * Format:
+ * - Separator: semicolon (;)
+ * - Encoding: Usually ISO-8859-1 (latin1)
+ * - Number format: German (1.234,56)
+ * - Date format: DD.MM.YY or DD.MM.YYYY
  */
 
-import { ImportStrategy, NormalizedTransaction } from '../interfaces';
-import { parseGermanDate, parseGermanNumber, generateHashId } from '../utils';
+import { ImportStrategy, NormalizedTransaction } from './ImportStrategy';
+import { parseGermanNumber, parseGermanDate, generateSyntheticId } from '../utils';
+import { cleanPayee } from '../utils/payeeCleaner';
 
 export class SparkasseStrategy implements ImportStrategy {
   name = 'Sparkasse';
-  priority = 100; // High priority (specific bank)
-  
+
   csvOptions = {
     separator: ';',
-    encoding: 'latin1' as const, // Critical for Umlauts (Müller, etc.)
     skipLines: 0,
+    encoding: 'latin1' as const,
   };
 
-  canParse(headers: string[]): boolean {
-    const headerStr = headers.join(' ').toUpperCase();
+  matches(headers: string): boolean {
+    const upper = headers.toUpperCase();
     return (
-      headerStr.includes('BEGÜNSTIGTER/ZAHLUNGSPFLICHTIGER') &&
-      (headerStr.includes('VALUTADATUM') || headerStr.includes('Buchungstag'))
+      upper.includes('BEGÜNSTIGTER/ZAHLUNGSPFLICHTIGER') &&
+      upper.includes('VALUTADATUM')
     );
   }
 
-  mapRow(row: Record<string, string>): NormalizedTransaction | null {
-    // Sparkasse uses "Begünstigter/Zahlungspflichtiger" for payee
-    const payeeField = row['Begünstigter/Zahlungspflichtiger'] || 
-                       row['Auftraggeber/Empfänger'] || 
-                       '';
+  mapRow(row: any): NormalizedTransaction | null {
+    // Required fields
+    const dateStr = row['Buchungstag'] || row['Valutadatum'] || row['Buchungstag'] || '';
+    const amountStr = row['Betrag'] || row['Umsatz'] || '';
+    const payee = row['Begünstigter/Zahlungspflichtiger'] || row['Begünstigter'] || '';
     
-    // Date can be in "Buchungstag" or "Valutadatum"
-    const dateField = row['Buchungstag'] || row['Valutadatum'] || '';
-    const date = parseGermanDate(dateField);
-    if (!date) return null;
+    // Skip empty rows
+    if (!dateStr || !amountStr) {
+      return null;
+    }
 
-    // Amount in "Betrag" field
-    const amountRaw = row['Betrag'] || '';
-    const amountCents = parseGermanNumber(amountRaw);
-    if (amountCents === 0 && !amountRaw) return null; // Skip empty rows
-
-    // Description from "Verwendungszweck"
-    const description = row['Verwendungszweck'] || '';
+    // Parse date
+    const date = parseGermanDate(dateStr);
     
-    // Currency (usually EUR, but check "Währung" field)
-    const currency = row['Währung'] || 'EUR';
+    // Parse amount (German format)
+    const amountCents = parseGermanNumber(amountStr);
+    
+    // Skip zero amounts
+    if (amountCents === 0) {
+      return null;
+    }
 
-    // Clean payee (remove extra whitespace)
-    const payee = payeeField.trim() || 'Unknown';
+    // Description
+    const description = row['Verwendungszweck'] || row['Verwendungszweck/Zweck'] || '';
 
-    // Generate hash for deduplication
-    const hashId = generateHashId(date, amountCents, payee, description);
+    // Clean payee
+    const cleanedPayee = cleanPayee(payee);
+
+    // Generate synthetic ID
+    const externalId = generateSyntheticId(date, amountCents, cleanedPayee);
 
     return {
       date,
       amountCents,
-      payee,
-      description,
-      currency,
-      externalId: null, // Sparkasse CSVs rarely have stable transaction IDs
-      hashId,
+      payee: cleanedPayee || 'Unbekannt',
+      description: description.trim(),
+      currency: 'EUR',
+      externalId,
     };
   }
 }
-

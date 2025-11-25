@@ -5,6 +5,7 @@ import { formatCurrency, formatDate } from '../../lib/format';
 import { TrendingUp, TrendingDown, MoreVertical, Trash2 } from 'lucide-react';
 import { deleteAccount } from '../../api/accountsApi';
 import { toast } from '../../lib/toast';
+import clsx from 'clsx';
 
 type AccountType = 'checking' | 'credit' | 'savings' | 'cash' | 'other';
 
@@ -45,9 +46,13 @@ interface WalletOverviewProps {
    * Set to 2 for a 2×2 grid layout (e.g. on Dashboard).
    */
   gridColumns?: number;
+  /**
+   * Whether this card should show "fresh" animation (briefly after data update).
+   */
+  isFresh?: boolean;
 }
 
-export const WalletOverview: React.FC<WalletOverviewProps> = ({ gridColumns }) => {
+export const WalletOverview: React.FC<WalletOverviewProps> = ({ gridColumns, isFresh = false }) => {
   const { data, isLoading, error, refetch } = useAccountsOverview();
   const navigate = useNavigate();
   const [deletingAccountId, setDeletingAccountId] = useState<string | null>(null);
@@ -167,7 +172,16 @@ export const WalletOverview: React.FC<WalletOverviewProps> = ({ gridColumns }) =
   const deltaIcon = totalDelta30d >= 0 ? TrendingUp : TrendingDown;
 
   return (
-    <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card shadow-elevated p-4 sm:p-5 lg:p-6 space-y-6">
+    <div
+      className={clsx(
+        'rounded-3xl border border-nf-border-subtle bg-nf-bg-card shadow-elevated p-4 sm:p-5 lg:p-6 space-y-6',
+        'transition-all duration-200 ease-out',
+        'hover:scale-[1.01] hover:shadow-lg',
+        'motion-reduce:transform-none motion-reduce:shadow-none',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card',
+        isFresh && 'animate-[nimbusPulse_1.5s_ease-out_0s_3]'
+      )}
+    >
       {/* Top Section: Title + Balance + Period Toggle */}
       <div className="flex items-center justify-between">
         <div>

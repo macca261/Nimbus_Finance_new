@@ -221,5 +221,76 @@ describe('MonthGlanceCard', () => {
     // But we can verify the button exists and is clickable
     expect(ctaButton).toBeInTheDocument();
   });
+
+  it('shows "Neu" pill when isFresh is true', () => {
+    const summary: MonthSummary = {
+      period: { start: '2024-01-01', end: '2024-01-31' },
+      incomeCents: 300000,
+      expenseCents: 50000,
+      netCents: 250000,
+      changeVsPrevMonthPct: null,
+      topCategories: [],
+      biggestExpense: null,
+      highlights: [],
+    };
+
+    renderWithRouter(
+      <MonthGlanceCard 
+        summary={summary} 
+        narrative={{ bullets: [] }} 
+        isLoading={false}
+        isFresh={true}
+      />
+    );
+
+    expect(screen.getByText('Neu')).toBeInTheDocument();
+  });
+
+  it('does not show "Neu" pill when isFresh is false', () => {
+    const summary: MonthSummary = {
+      period: { start: '2024-01-01', end: '2024-01-31' },
+      incomeCents: 300000,
+      expenseCents: 50000,
+      netCents: 250000,
+      changeVsPrevMonthPct: null,
+      topCategories: [],
+      biggestExpense: null,
+      highlights: [],
+    };
+
+    renderWithRouter(
+      <MonthGlanceCard 
+        summary={summary} 
+        narrative={{ bullets: [] }} 
+        isLoading={false}
+        isFresh={false}
+      />
+    );
+
+    expect(screen.queryByText('Neu')).not.toBeInTheDocument();
+  });
+
+  it('does not show "Neu" pill when isFresh is undefined', () => {
+    const summary: MonthSummary = {
+      period: { start: '2024-01-01', end: '2024-01-31' },
+      incomeCents: 300000,
+      expenseCents: 50000,
+      netCents: 250000,
+      changeVsPrevMonthPct: null,
+      topCategories: [],
+      biggestExpense: null,
+      highlights: [],
+    };
+
+    renderWithRouter(
+      <MonthGlanceCard 
+        summary={summary} 
+        narrative={{ bullets: [] }} 
+        isLoading={false}
+      />
+    );
+
+    expect(screen.queryByText('Neu')).not.toBeInTheDocument();
+  });
 });
 

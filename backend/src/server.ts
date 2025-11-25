@@ -28,6 +28,9 @@ import { bucketsRouter } from './routes/buckets';
 import { questsRouter } from './routes/quests';
 import coachRouter from './routes/coach';
 import gamificationRouter from './routes/gamification';
+import splitsRouter from './routes/splits';
+import inboxRouter from './routes/inbox';
+import transactionExplanationRouter from './routes/transactionExplanation';
 import os from 'node:os';
 import fs from 'node:fs';
 import { decodeCsvBuffer } from './lib/text';
@@ -184,6 +187,7 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   app.use('/api/paypal', paypalRouter);
   app.use('/api/overrides', overridesRouter);
   app.use('/api/transactions', transactionsRouter);
+  app.use('/api/transactions', transactionExplanationRouter);
   app.use('/api/accounts', accountsRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/normalizer', normalizerRouter);
@@ -194,7 +198,9 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   app.use('/api/buckets', bucketsRouter);
   app.use('/api/quests', questsRouter);
   app.use('/api/coach', coachRouter);
-  app.use('/api', gamificationRouter);
+  app.use('/api/gamification', gamificationRouter);
+  app.use('/api/splits', splitsRouter);
+  app.use('/api/inbox', inboxRouter);
   mountReviewRoutes(app);
   console.log('Mounted: /api/review/transactions');
   mountSubscriptionRoutes(app);

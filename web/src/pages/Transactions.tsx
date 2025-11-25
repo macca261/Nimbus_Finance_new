@@ -8,6 +8,7 @@ import { TransactionsHeaderStrip } from '../components/transactions/Transactions
 import { TransactionCard } from '../components/transactions/TransactionCard';
 import { DraggableTransactionCard } from '../components/transactions/DraggableTransactionCard';
 import { groupTransactionsByDate } from '../lib/dateGrouping';
+import { TransactionExplanationPanel } from '../features/transactions/components/TransactionExplanationPanel';
 
 export type ApiTransaction = {
   id: number;
@@ -120,6 +121,7 @@ export const Transactions: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [expandedTransactionId, setExpandedTransactionId] = useState<number | null>(null);
   // Review mode derived from initial URL: low-confidence filter
   const [lowConfidenceReview, setLowConfidenceReview] = useState<boolean>(initialReview === 'low-confidence');
   const [filters, setFilters] = useState({
@@ -613,19 +615,26 @@ export const Transactions: React.FC = () => {
                 {/* Transaction Cards */}
                 <div className="space-y-2">
                   {group.transactions.map(tx => (
-                    <DraggableTransactionCard
-                      key={tx.displayId}
-                      transaction={tx}
-                      isSelected={selectedIds.includes(tx.id)}
-                      onSelect={toggleSelected}
-                      onCategoryChange={handleOverrideApplied}
-                      onNavigate={tx => {
-                        // Navigate to transaction detail if available, or keep current behavior
-                        if (tx.reimbursementGroupId) {
-                          navigate(`/review?focusReimbursementGroup=${encodeURIComponent(tx.reimbursementGroupId)}`);
-                        }
-                      }}
-                    />
+                    <div key={tx.displayId}>
+                      <DraggableTransactionCard
+                        transaction={tx}
+                        isSelected={selectedIds.includes(tx.id)}
+                        onSelect={toggleSelected}
+                        onCategoryChange={handleOverrideApplied}
+                        onNavigate={tx => {
+                          // Navigate to transaction detail if available, or keep current behavior
+                          if (tx.reimbursementGroupId) {
+                            navigate(`/review?focusReimbursementGroup=${encodeURIComponent(tx.reimbursementGroupId)}`);
+                          } else {
+                            // Toggle explanation panel
+                            setExpandedTransactionId(expandedTransactionId === tx.id ? null : tx.id);
+                          }
+                        }}
+                      />
+                      {expandedTransactionId === tx.id && (
+                        <TransactionExplanationPanel transactionId={tx.id} />
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>

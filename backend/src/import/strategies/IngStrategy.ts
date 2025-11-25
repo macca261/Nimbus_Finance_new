@@ -1,64 +1,77 @@
 /**
  * ING (DiBa) CSV Import Strategy
  * 
- * Handles ING CSV exports with:
- * - Semicolon delimiter
- * - ISO-8859-1 encoding
- * - German number format
- * - German date format
+ * Detects ING CSV exports by headers:
+ * - "Auftraggeber/Empfänger"
+ * - "Buchungstext"
+ * 
+ * Format:
+ * - Separator: semicolon (;)
+ * - Encoding: Usually ISO-8859-1 (latin1)
+ * - Number format: German (1.234,56) but sometimes with "€" suffix
+ * - Date format: DD.MM.YYYY
  */
 
-import { ImportStrategy, NormalizedTransaction } from '../interfaces';
-import { parseGermanDate, parseGermanNumber, generateHashId } from '../utils';
+import { ImportStrategy, NormalizedTransaction } from './ImportStrategy';
+import { parseGermanNumber, parseGermanDate, generateSyntheticId } from '../utils';
+import { cleanPayee } from '../utils/payeeCleaner';
 
 export class IngStrategy implements ImportStrategy {
   name = 'ING';
-  priority = 100;
-  
+
   csvOptions = {
     separator: ';',
-    encoding: 'latin1' as const,
     skipLines: 0,
+    encoding: 'latin1' as const,
   };
 
-  canParse(headers: string[]): boolean {
-    const headerStr = headers.join(' ').toUpperCase();
+  matches(headers: string): boolean {
+    const upper = headers.toUpperCase();
     return (
-      headerStr.includes('AUFTRAGGEBER/BEGÜNSTIGTER') &&
-      headerStr.includes('BUCHUNGSTEXT')
+      (upper.includes('AUFTRAGGEBER/EMPFÄNGER') || upper.includes('AUFTRAGGEBER')) &&
+      upper.includes('BUCHUNGSTEXT')
     );
   }
 
-  mapRow(row: Record<string, string>): NormalizedTransaction | null {
-    // Date from "Buchung" or "Wertstellung"
-    const dateField = row['Buchung'] || row['Wertstellung'] || '';
-    const date = parseGermanDate(dateField);
-    if (!date) return null;
+  mapRow(row: any): NormalizedTransaction | null {
+    // Required fields
+    const dateStr = row['Buchungstag'] || row['Valutadatum'] || '';
+    const amountStr = row['Betrag'] || row['Umsatz'] || '';
+    const payee = row['Auftraggeber/Empfänger'] || row['Auftraggeber'] || row['Empfänger'] || '';
+    
+    // Skip empty rows
+    if (!dateStr || !amountStr) {
+      return null;
+    }
 
-    // Amount in "Betrag"
-    const amountRaw = row['Betrag'] || '';
-    const amountCents = parseGermanNumber(amountRaw);
-    if (amountCents === 0 && !amountRaw) return null;
+    // Parse date
+    const date = parseGermanDate(dateStr);
+    
+    // Parse amount - ING often adds "€" suffix, strip it first
+    const cleanedAmount = amountStr.replace(/€/g, '').trim();
+    const amountCents = parseGermanNumber(cleanedAmount);
+    
+    // Skip zero amounts
+    if (amountCents === 0) {
+      return null;
+    }
 
-    // Payee from "Auftraggeber/Begünstigter"
-    const payee = row['Auftraggeber/Begünstigter'] || 'Unknown';
+    // Description
+    const description = row['Verwendungszweck'] || row['Buchungstext'] || '';
 
-    // Description from "Buchungstext"
-    const description = row['Buchungstext'] || '';
+    // Clean payee
+    const cleanedPayee = cleanPayee(payee);
 
-    const currency = row['Währung'] || 'EUR';
-
-    const hashId = generateHashId(date, amountCents, payee, description);
+    // Generate synthetic ID
+    const externalId = generateSyntheticId(date, amountCents, cleanedPayee);
 
     return {
       date,
       amountCents,
-      payee: payee.trim(),
+      payee: cleanedPayee || 'Unbekannt',
       description: description.trim(),
-      currency,
-      externalId: null,
-      hashId,
+      currency: 'EUR',
+      externalId,
     };
   }
 }
-

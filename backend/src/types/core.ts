@@ -9,12 +9,18 @@ export type Source = 'csv_bank' | 'csv_paypal' | 'api_tink' | 'manual';
  * Stores method (RULE/ML/LLM), confidence, and metadata without storing full prompts
  * (GDPR/privacy requirement: only template IDs and base metrics).
  */
+export type CategorizationMethod = 'RULE' | 'ML' | 'LLM' | 'UNKNOWN';
+
 export interface CategorizationTrace {
-  method: 'RULE' | 'ML' | 'LLM';
-  confidence: number; // 0–100
-  ruleMatch?: string; // e.g., 'rewe-supermarket'
-  llmModel?: string; // e.g., 'gpt-4o-mini'
-  llmPromptTemplateId?: string; // short ID for the template used, NOT full prompt text
+  method: CategorizationMethod;
+  confidence: number; // 0..1 or 0..100; we use 0..100 for consistency
+  ruleMatchId?: string; // internal rule identifier if method === 'RULE'
+  ruleDescription?: string; // summarized rule description for UX
+  mlModel?: string; // model name if method === 'ML'
+  llmModel?: string; // model name if method === 'LLM'
+  llmReasoning?: string; // short explanation string
+  createdAt: string; // ISO timestamp
+  // reserve space for future keys, like "features" or "scoreBreakdown"
 }
 
 export interface Transaction {

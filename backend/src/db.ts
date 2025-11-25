@@ -197,6 +197,20 @@ export function ensureSchema(db: Database) {
   ensureColumn('is_external_savings', "ALTER TABLE transactions ADD COLUMN is_external_savings INTEGER DEFAULT 0", () => {
     console.log('[migrate] added column transactions.is_external_savings');
   });
+  // Transaction Splits: Status for inbox workflow ('inbox', 'reviewed', 'skipped')
+  ensureColumn('status', "ALTER TABLE transactions ADD COLUMN status TEXT DEFAULT 'inbox'", () => {
+    console.log('[migrate] added column transactions.status');
+    // Migrate existing review_status to status if it exists
+    try {
+      db.exec(`UPDATE transactions SET status = 'reviewed' WHERE review_status = 'reviewed'`);
+    } catch {
+      // review_status might not exist, ignore
+    }
+  });
+  // Keep review_status for backward compatibility
+  ensureColumn('review_status', "ALTER TABLE transactions ADD COLUMN review_status TEXT DEFAULT 'pending'", () => {
+    console.log('[migrate] added column transactions.review_status');
+  });
 
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS ux_tx_dedup
@@ -478,6 +492,50 @@ export function ensureSchema(db: Database) {
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_gamification_log_goal_id ON gamification_log(goal_id);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_gamification_log_timestamp ON gamification_log(timestamp DESC);`);
+
+  // Transaction Splits: Table for split transaction allocations
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS transaction_splits (
+      id TEXT PRIMARY KEY,
+      transaction_id INTEGER NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      category_id TEXT,
+      memo TEXT,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+      FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_transaction_splits_transaction_id ON transaction_splits(transaction_id);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_transaction_splits_category_id ON transaction_splits(category_id);`);
+
+  // Migrate existing transactions: Create one split per transaction with full amount
+  // This ensures backward compatibility and moves us to "Splits-Only" architecture
+  try {
+    const existingSplits = db.prepare(`SELECT COUNT(*) as count FROM transaction_splits`).get() as { count: number };
+    if (existingSplits.count === 0) {
+      const migrateStmt = db.prepare(`
+        INSERT INTO transaction_splits (id, transaction_id, amount_cents, category_id, memo, created_at)
+        SELECT 
+          lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' || hex(randomblob(1)) || '-' || 
+                substr(hex(randomblob(1)), 1, 1) || hex(randomblob(2)) || '-' || hex(randomblob(6))) as id,
+          id as transaction_id,
+          amountCents as amount_cents,
+          category as category_id,
+          NULL as memo,
+          COALESCE(createdAt, CURRENT_TIMESTAMP) as created_at
+        FROM transactions
+        WHERE NOT EXISTS (
+          SELECT 1 FROM transaction_splits WHERE transaction_splits.transaction_id = transactions.id
+        )
+      `);
+      const result = migrateStmt.run();
+      if (result.changes > 0) {
+        console.log(`[migrate] Migrated ${result.changes} transactions to transaction_splits`);
+      }
+    }
+  } catch (err) {
+    console.warn('[migrate] transaction_splits migration skipped:', (err as Error)?.message || err);
+  }
 
   // Hybrid Savings: View for unified goal progress (virtual + external)
   db.exec(`
@@ -1529,20 +1587,32 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         if (result.source === 'rule' && result.ruleId) {
           trace = {
             method: 'RULE',
-            confidence: Math.round((result.confidence ?? 0) * 100),
-            ruleMatch: result.ruleId,
+            confidence: Math.round((result.confidence ?? 0) * 100), // Store as 0-100
+            ruleMatchId: result.ruleId,
+            ruleDescription: result.explanation || `Regel: ${result.ruleId}`, // Use explanation or fallback to ruleId
+            createdAt: new Date().toISOString(),
           };
         } else if (result.source === 'llm' || result.source === 'ai') {
           trace = {
             method: 'LLM',
             confidence: Math.round((result.confidence ?? 0) * 100),
             llmModel: 'gpt-4o-mini', // Default model, can be made configurable
-            llmPromptTemplateId: 'category-suggestion-v1',
+            llmReasoning: result.explanation || null, // Use explanation as reasoning
+            createdAt: new Date().toISOString(),
           };
         } else if (result.source === 'ml' || result.source === 'heuristic') {
           trace = {
             method: 'ML',
             confidence: Math.round((result.confidence ?? 0) * 100),
+            mlModel: 'heuristic-v1', // Default model name
+            createdAt: new Date().toISOString(),
+          };
+        } else {
+          // Unknown source - still create a trace for transparency
+          trace = {
+            method: 'UNKNOWN',
+            confidence: Math.round((result.confidence ?? 0) * 100),
+            createdAt: new Date().toISOString(),
           };
         }
         (base as any).categorizationTrace = trace;

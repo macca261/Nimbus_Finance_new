@@ -99,4 +99,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Nimbus Pulse Animation - Soft glow for fresh data */
+@keyframes nimbusPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(56, 189, 248, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+  }
+}
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[nimbusPulse_1\.5s_ease-out_0s_3\] {
+    animation: none;
+  }
+}
+
 

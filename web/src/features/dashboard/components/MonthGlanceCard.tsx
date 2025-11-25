@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Calendar, RefreshCw, ArrowRight, AlertCircle } from 'lucide-react';
 import type { MonthSummary, MonthNarrative } from '../../../hooks/useMonthSummary';
 import { formatCurrency } from '../../../lib/format';
+import clsx from 'clsx';
 
 interface MonthGlanceCardProps {
   summary: MonthSummary | null;
@@ -10,6 +11,7 @@ interface MonthGlanceCardProps {
   isLoading: boolean;
   error?: Error | null;
   onRefresh?: () => void;
+  isFresh?: boolean;
 }
 
 export const MonthGlanceCard: React.FC<MonthGlanceCardProps> = ({
@@ -18,13 +20,14 @@ export const MonthGlanceCard: React.FC<MonthGlanceCardProps> = ({
   isLoading,
   error,
   onRefresh,
+  isFresh = false,
 }) => {
   const navigate = useNavigate();
 
   // Loading state
   if (isLoading) {
     return (
-      <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated">
+      <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out">
         <div className="flex items-center gap-2 mb-4">
           <Calendar className="h-5 w-5 text-nf-primary flex-shrink-0" />
           <h3 className="text-base font-semibold text-nf-text-main">Monat auf einen Blick</h3>
@@ -41,7 +44,7 @@ export const MonthGlanceCard: React.FC<MonthGlanceCardProps> = ({
   // Error state
   if (error) {
     return (
-      <div className="rounded-3xl border border-nf-negative/30 bg-nf-negative/10 backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated">
+      <div className="rounded-3xl border border-nf-negative/30 bg-nf-negative/10 backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div className="flex items-center gap-2">
             <Calendar className="h-5 w-5 text-nf-negative flex-shrink-0" />
@@ -80,7 +83,7 @@ export const MonthGlanceCard: React.FC<MonthGlanceCardProps> = ({
   // Empty state (no data)
   if (!summary || (summary.incomeCents === 0 && summary.expenseCents === 0)) {
     return (
-      <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated">
+      <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out">
         <div className="flex items-center gap-2 mb-4">
           <Calendar className="h-5 w-5 text-nf-primary flex-shrink-0" />
           <h3 className="text-base font-semibold text-nf-text-main">Monat auf einen Blick</h3>
@@ -104,12 +107,28 @@ export const MonthGlanceCard: React.FC<MonthGlanceCardProps> = ({
   const bullets = narrative?.bullets || [];
 
   return (
-    <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:-translate-y-[1px] hover:shadow-xl">
+    <div
+      className={clsx(
+        'rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated',
+        'transition-all duration-200 ease-out',
+        'hover:scale-[1.01] hover:shadow-lg',
+        'motion-reduce:transform-none motion-reduce:shadow-none',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card',
+        isFresh && 'animate-[nimbusPulse_1.5s_ease-out_0s_3]'
+      )}
+    >
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <Calendar className="h-5 w-5 text-nf-primary flex-shrink-0" />
-          <h3 className="text-base font-semibold text-nf-text-main">Monat auf einen Blick</h3>
+          <h3 className="text-base font-semibold text-nf-text-main flex items-center gap-2">
+            Monat auf einen Blick
+            {isFresh && (
+              <span className="inline-flex items-center rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-500">
+                Neu
+              </span>
+            )}
+          </h3>
         </div>
         {onRefresh && (
           <button

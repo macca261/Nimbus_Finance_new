@@ -1,93 +1,62 @@
 /**
  * useGamificationData Hook
  * 
- * Fetches gamification snapshot (XP, level, rank, streak, quests) from the backend.
+ * Fetches gamification summary (XP, rank, streak, quests) from the backend.
  * This prepares Nimbus for future Pro tier features and enhanced user engagement.
  */
 
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import axios from 'axios';
 
-export interface GamificationSnapshot {
+export interface GamificationSummary {
+  rank: 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
   xp: number;
+  xpToNext: number;
   level: number;
-  rankLabel: string;
-  streakDays: number;
-  activeQuests: Array<{
+  currentStreakDays: number;
+  longestStreakDays: number;
+  completedQuestsThisWeek: number;
+  achievementsCompleted: number;
+  nextSuggestedQuest?: {
     id: string;
     title: string;
-    progressPercent: number;
-  }>;
-  recentlyCompletedQuests: Array<{
-    id: string;
-    title: string;
-    completedAt: string;
-  }>;
+    ctaLabel: string;
+    ctaPath: string;
+  } | null;
 }
 
-export function useGamificationData() {
-  // Default safe snapshot
-  const defaultSnapshot: GamificationSnapshot = {
-    xp: 0,
-    level: 1,
-    rankLabel: 'Bronze Budgeter',
-    streakDays: 0,
-    activeQuests: [],
-    recentlyCompletedQuests: [],
-  };
+interface UseGamificationData {
+  data: GamificationSummary | null;
+  isLoading: boolean;
+  error: Error | null;
+  refetch: () => void;
+}
 
-  const [data, setData] = useState<GamificationSnapshot>(defaultSnapshot);
-  const [loading, setLoading] = useState(true);
+export function useGamificationData(): UseGamificationData {
+  const [data, setData] = useState<GamificationSummary | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        const res = await fetch('/api/gamification');
-        
-        if (!res.ok) {
-          // Even on error, use default snapshot instead of null
-          throw new Error(`Failed to load gamification data: ${res.status}`);
-        }
-        
-        const json = await res.json();
-        
-        if (!cancelled) {
-          // Validate response has required fields, fallback to default if not
-          if (json && typeof json.xp === 'number' && typeof json.level === 'number') {
-            setData(json);
-          } else {
-            console.warn('[useGamificationData] Invalid response format, using default');
-            setData(defaultSnapshot);
-          }
-          setError(null);
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          // Log error but don't crash - use default snapshot
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn('[useGamificationData] Error loading gamification:', err);
-          }
-          setError(err);
-          // Always provide a valid snapshot, even on error
-          setData(defaultSnapshot);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+  const fetchData = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const res = await axios.get<GamificationSummary>('/api/gamification');
+      setData(res.data);
+    } catch (err: any) {
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error('[useGamificationData] Failed to fetch', err);
       }
-    })();
+      setError(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    return () => {
-      cancelled = true;
-    };
+  useEffect(() => {
+    fetchData();
   }, []);
 
-  return { data, loading, error };
+  return { data, isLoading, error, refetch: fetchData };
 }
-

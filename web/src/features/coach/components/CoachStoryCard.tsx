@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { Sparkles, RefreshCw, CheckCircle2, ArrowRight } from 'lucide-react';
 import type { CoachStoryResponse } from '../../../api/coachApi';
 import { formatCurrency } from '../../../lib/format';
+import clsx from 'clsx';
 
 interface CoachStoryCardProps {
   storyResponse: CoachStoryResponse | null;
   isLoading: boolean;
   error?: Error | null;
   onRefresh?: () => void;
+  isFresh?: boolean;
 }
 
 /**
@@ -49,6 +51,7 @@ export const CoachStoryCard: React.FC<CoachStoryCardProps> = ({
   isLoading,
   error,
   onRefresh,
+  isFresh = false,
 }) => {
   const navigate = useNavigate();
 
@@ -62,14 +65,28 @@ export const CoachStoryCard: React.FC<CoachStoryCardProps> = ({
   const isEmpty = storyResponse?.isEmpty;
 
   return (
-    <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:-translate-y-[1px] hover:shadow-xl">
+    <div
+      className={clsx(
+        'rounded-3xl border border-nf-border-subtle bg-nf-bg-card backdrop-blur-sm p-5 sm:p-6 lg:p-7 shadow-elevated',
+        'transition-all duration-200 ease-out',
+        'hover:scale-[1.01] hover:shadow-lg',
+        'motion-reduce:transform-none motion-reduce:shadow-none',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card',
+        isFresh && 'animate-[nimbusPulse_1.5s_ease-out_0s_3]'
+      )}
+    >
       {/* Header with title and refresh button */}
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="flex items-center gap-2">
           <Sparkles className="h-5 w-5 text-nf-primary flex-shrink-0" />
           <div>
-            <h3 className="text-base font-semibold text-nf-text-main">
+            <h3 className="text-base font-semibold text-nf-text-main flex items-center gap-2">
               {story?.title || 'Dein Monat in kurzen Worten'}
+              {isFresh && (
+                <span className="inline-flex items-center rounded-full bg-sky-500/10 px-2 py-0.5 text-xs font-medium text-sky-500">
+                  Neu
+                </span>
+              )}
             </h3>
             <p className="text-[11px] text-nf-text-muted mt-0.5">
               {story ? 'KI-generierte Zusammenfassung' : 'Letzte 30 Tage'}

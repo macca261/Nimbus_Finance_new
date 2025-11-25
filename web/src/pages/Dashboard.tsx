@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppShell } from '../layout/AppShell';
 import { useDashboardState } from '../hooks/useDashboardState';
@@ -15,10 +15,13 @@ import { AchievementsTeaser } from '../features/achievements/components/Achievem
 import { CoachStoryCard } from '../features/coach/components/CoachStoryCard';
 import { useCoachStory } from '../hooks/useCoachStory';
 import { MonthGlanceCard } from '../features/dashboard/components/MonthGlanceCard';
-import { useMonthSummary } from '../hooks/useMonthSummary';
+import { useMonthSummary, type MonthSummary } from '../hooks/useMonthSummary';
 import { QuestStrip } from '../features/quests/QuestStrip';
 import { useQuests } from '../hooks/useQuests';
 import { useGamificationData } from '../hooks/useGamificationData';
+import { GamificationHud } from '../features/gamification/components/GamificationHud';
+import { subscribeToDataMutations } from '../lib/dataEvents';
+import type { CoachStoryResponse } from '../api/coachApi';
 
 const SHELL_CLASS = 'mx-auto w-full max-w-[1680px] px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12';
 
@@ -36,7 +39,124 @@ export const Dashboard: React.FC = () => {
   const coachStory = useCoachStory({ days: 30, autoFetch: true });
   const monthSummary = useMonthSummary({ autoFetch: true });
   const quests = useQuests();
-  const { data: gamification } = useGamificationData();
+  const { data: gamification, isLoading: gamificationLoading, error: gamificationError } = useGamificationData();
+
+  // Freshness state tracking - session-local only
+  const [monthSummaryFresh, setMonthSummaryFresh] = useState(false);
+  const [coachStoryFresh, setCoachStoryFresh] = useState(false);
+  const [walletFresh, setWalletFresh] = useState(false);
+  const timeoutRefs = useRef<{
+    monthSummary?: NodeJS.Timeout;
+    coachStory?: NodeJS.Timeout;
+    wallet?: NodeJS.Timeout;
+  }>({});
+  const hasMountedRef = useRef(false);
+  const previousDataRef = useRef<{
+    monthSummary?: MonthSummary | null;
+    coachStory?: CoachStoryResponse | null;
+    wallet?: typeof dashboard.summary;
+  }>({});
+
+  // Track initial mount to prevent freshness on first load
+  useEffect(() => {
+    hasMountedRef.current = true;
+  }, []);
+
+  // Subscribe to data mutations and set freshness flags
+  useEffect(() => {
+    const unsubscribe = subscribeToDataMutations((detail) => {
+      // When data mutations occur, the hooks will automatically refetch
+      // We'll set freshness when the hooks' data actually updates (see effects below)
+    });
+
+    return unsubscribe;
+  }, []);
+
+  // Watch for data changes after mutations to set freshness
+  useEffect(() => {
+    // Only set fresh if data actually changed (not just on initial load)
+    const dataChanged = hasMountedRef.current && 
+      previousDataRef.current.monthSummary !== monthSummary.data;
+
+    if (dataChanged && monthSummary.data && !monthSummary.isLoading) {
+      // Clear existing timeout
+      if (timeoutRefs.current.monthSummary) {
+        clearTimeout(timeoutRefs.current.monthSummary);
+      }
+
+      setMonthSummaryFresh(true);
+      // Reset after 6 seconds
+      timeoutRefs.current.monthSummary = setTimeout(() => {
+        setMonthSummaryFresh(false);
+      }, 6000);
+    }
+
+    // Update previous data ref
+    previousDataRef.current.monthSummary = monthSummary.data || null;
+
+    return () => {
+      if (timeoutRefs.current.monthSummary) {
+        clearTimeout(timeoutRefs.current.monthSummary);
+      }
+    };
+  }, [monthSummary.data, monthSummary.isLoading]);
+
+  useEffect(() => {
+    // Only set fresh if data actually changed (not just on initial load)
+    const dataChanged = hasMountedRef.current && 
+      previousDataRef.current.coachStory !== coachStory.story;
+
+    if (dataChanged && coachStory.story && !coachStory.isLoading) {
+      // Clear existing timeout
+      if (timeoutRefs.current.coachStory) {
+        clearTimeout(timeoutRefs.current.coachStory);
+      }
+
+      setCoachStoryFresh(true);
+      // Reset after 6 seconds
+      timeoutRefs.current.coachStory = setTimeout(() => {
+        setCoachStoryFresh(false);
+      }, 6000);
+    }
+
+    // Update previous data ref
+    previousDataRef.current.coachStory = coachStory.story || null;
+
+    return () => {
+      if (timeoutRefs.current.coachStory) {
+        clearTimeout(timeoutRefs.current.coachStory);
+      }
+    };
+  }, [coachStory.story, coachStory.isLoading]);
+
+  // Watch dashboard refetch for wallet freshness
+  useEffect(() => {
+    // Only set fresh if data actually changed (not just on initial load)
+    const dataChanged = hasMountedRef.current && 
+      previousDataRef.current.wallet !== dashboard.summary;
+
+    if (dataChanged && dashboard.summary && !dashboard.loading) {
+      // Clear existing timeout
+      if (timeoutRefs.current.wallet) {
+        clearTimeout(timeoutRefs.current.wallet);
+      }
+
+      setWalletFresh(true);
+      // Reset after 6 seconds
+      timeoutRefs.current.wallet = setTimeout(() => {
+        setWalletFresh(false);
+      }, 6000);
+    }
+
+    // Update previous data ref
+    previousDataRef.current.wallet = dashboard.summary;
+
+    return () => {
+      if (timeoutRefs.current.wallet) {
+        clearTimeout(timeoutRefs.current.wallet);
+      }
+    };
+  }, [dashboard.summary, dashboard.loading]);
 
   // Navigation helper for Transactions page
   const navigateToTransactions = useCallback(
@@ -128,16 +248,12 @@ export const Dashboard: React.FC = () => {
         <div className={SHELL_CLASS}>
           {/* Dashboard Grid Layout - Consistent full/half-width system for future drag-and-drop */}
           <div className="py-4 sm:py-5 space-y-4 sm:space-y-5">
-            {/* Gamification Pill - Subtle rank/XP indicator */}
-            {gamification && (
-              <div className="flex items-center justify-end">
-                <div className="inline-flex items-center gap-2 rounded-full bg-nf-surface-muted px-3 py-1 text-xs text-nf-text-muted border border-nf-border-subtle">
-                  <span className="font-medium">{gamification.rankLabel}</span>
-                  <span>·</span>
-                  <span>{gamification.xp} XP</span>
-                </div>
-              </div>
-            )}
+            {/* Gamification HUD */}
+            <GamificationHud
+              data={gamification}
+              isLoading={gamificationLoading}
+              error={gamificationError}
+            />
             
             {/* Quest Strip - Integrated, thinner cards (2 columns on desktop) */}
             <QuestStrip
@@ -149,13 +265,13 @@ export const Dashboard: React.FC = () => {
 
             {/* Row 1: Wallet Overview - Full Width */}
             <section className="col-span-full">
-              <WalletOverview gridColumns={2} />
+              <WalletOverview gridColumns={2} isFresh={walletFresh} />
             </section>
 
             {/* Row 1.5: Health Cards - Two half-width cards side by side */}
             <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Money Health Card */}
-              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:-translate-y-[1px] hover:shadow-xl">
+              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:scale-[1.01] hover:shadow-lg motion-reduce:transform-none motion-reduce:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card">
                 <div className="mb-4">
                   <p className="text-[11px] uppercase tracking-wide text-nf-text-muted mb-1">
                     Money Health
@@ -197,14 +313,14 @@ export const Dashboard: React.FC = () => {
                 </p>
               </div>
               {/* Dein Monat Card */}
-              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:-translate-y-[1px] hover:shadow-xl">
+              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:scale-[1.01] hover:shadow-lg motion-reduce:transform-none motion-reduce:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card">
                 <MonthlySnapshotCard insights={monthlyInsights} noCard />
               </div>
             </section>
 
             {/* Row 2: Charts - Full Width */}
             <section className="col-span-full">
-              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:-translate-y-[1px] hover:shadow-xl">
+              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:scale-[1.01] hover:shadow-lg motion-reduce:transform-none motion-reduce:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card">
                 <DashboardChartsHub
                   balance={summary?.balanceOverTime ?? []}
                   cashflow={summary?.cashflowByMonth ?? []}
@@ -224,18 +340,20 @@ export const Dashboard: React.FC = () => {
                 isLoading={monthSummary.isLoading}
                 error={monthSummary.error}
                 onRefresh={monthSummary.refetch}
+                isFresh={monthSummaryFresh}
               />
               <CoachStoryCard
                 storyResponse={coachStory.story}
                 isLoading={coachStory.isLoading}
                 error={coachStory.error}
                 onRefresh={coachStory.refetch}
+                isFresh={coachStoryFresh}
               />
             </section>
 
             {/* Row 2.6: Achievements Teaser - Full Width */}
             <section className="col-span-full">
-              <AchievementsTeaser />
+              <AchievementsTeaser isFresh={false} />
             </section>
 
             {/* Error / Early state messages */}
@@ -256,7 +374,7 @@ export const Dashboard: React.FC = () => {
               <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Zu prüfen */}
                 {(reviewCounts.uncategorized > 0 || reviewCounts.lowConfidence > 0) && (
-                  <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:-translate-y-[1px] hover:shadow-xl">
+                  <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:scale-[1.01] hover:shadow-lg motion-reduce:transform-none motion-reduce:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card">
                     <div className="flex items-center gap-2 mb-4">
                       <span className="text-lg">👀</span>
                       <h3 className="text-base font-semibold text-nf-text-main">Zu prüfen</h3>
@@ -290,7 +408,7 @@ export const Dashboard: React.FC = () => {
 
                 {/* Sonstiges aufräumen */}
                 {showSonstigesCard ? (
-                  <div className="rounded-3xl border border-nf-warning/30 bg-nf-warning/10 p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:-translate-y-[1px] hover:shadow-xl">
+                  <div className="rounded-3xl border border-nf-warning/30 bg-nf-warning/10 p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:scale-[1.01] hover:shadow-lg motion-reduce:transform-none motion-reduce:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card">
                     <div className="flex items-start justify-between mb-4">
                       <div className="flex items-center gap-2">
                         <span className="text-lg">🧹</span>

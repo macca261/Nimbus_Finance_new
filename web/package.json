@@ -16,6 +16,7 @@
     "@dnd-kit/sortable": "^8.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@nimbus/categorizer": "file:../packages/categorizer",
+    "@radix-ui/react-dialog": "^1.1.15",
     "axios": "^1.7.2",
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.24",
@@ -24,8 +25,10 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-dropzone": "^14.3.5",
+    "react-hook-form": "^7.66.1",
     "react-router-dom": "^6.26.1",
     "recharts": "^2.15.4",
+    "vaul": "^1.1.2",
     "zustand": "^5.0.8"
   },
   "devDependencies": {

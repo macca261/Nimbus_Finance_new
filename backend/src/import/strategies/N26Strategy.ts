@@ -1,60 +1,77 @@
 /**
  * N26 CSV Import Strategy
  * 
- * N26 uses modern formats (often already ISO dates, UTF-8)
+ * Detects N26 CSV exports by headers:
+ * - "Verwendungszweck" AND "Betrag (EUR)"
+ * 
+ * Format:
+ * - Separator: comma (,)
+ * - Encoding: UTF-8
+ * - Number format: International (1,234.56) or German (1.234,56) - auto-detect
+ * - Date format: DD.MM.YYYY or YYYY-MM-DD
  */
 
-import { ImportStrategy, NormalizedTransaction } from '../interfaces';
-import { parseGermanDate, parseGermanNumber, generateHashId } from '../utils';
+import { ImportStrategy, NormalizedTransaction } from './ImportStrategy';
+import { parseNumberAuto, parseGermanDate } from '../utils';
+import { cleanPayee } from '../utils/payeeCleaner';
 
 export class N26Strategy implements ImportStrategy {
   name = 'N26';
-  priority = 100;
-  
+
   csvOptions = {
     separator: ',',
-    encoding: 'utf-8' as const,
     skipLines: 0,
+    encoding: 'utf-8' as const,
   };
 
-  canParse(headers: string[]): boolean {
-    const headerStr = headers.join(' ').toUpperCase();
+  matches(headers: string): boolean {
+    const upper = headers.toUpperCase();
     return (
-      (headerStr.includes('MAIN CATEGORY') || headerStr.includes('PONZI')) &&
-      headerStr.includes('DATE')
-    ) || (
-      headerStr.includes('PAYEE') &&
-      headerStr.includes('AMOUNT (EUR)')
+      upper.includes('VERWENDUNGSZWECK') &&
+      (upper.includes('BETRAG') || upper.includes('BETRAG (EUR)'))
     );
   }
 
-  mapRow(row: Record<string, string>): NormalizedTransaction | null {
-    // N26 often uses ISO dates already
-    const dateField = row['Date'] || '';
-    const date = parseGermanDate(dateField);
-    if (!date) return null;
+  mapRow(row: any): NormalizedTransaction | null {
+    // Required fields
+    const dateStr = row['Datum'] || row['Buchungsdatum'] || row['Datum der Buchung'] || '';
+    const amountStr = row['Betrag (EUR)'] || row['Betrag'] || row['Amount'] || '';
+    const payee = row['Empfänger'] || row['Begünstigter'] || row['Payee'] || '';
+    
+    // Skip empty rows
+    if (!dateStr || !amountStr) {
+      return null;
+    }
 
-    // Amount in "Amount (EUR)" or "Amount"
-    const amountRaw = row['Amount (EUR)'] || row['Amount'] || '';
-    const amountCents = parseGermanNumber(amountRaw);
-    if (amountCents === 0 && !amountRaw) return null;
+    // Parse date
+    const date = parseGermanDate(dateStr);
+    
+    // Parse amount (auto-detect format)
+    const amountCents = parseNumberAuto(amountStr);
+    
+    // Skip zero amounts
+    if (amountCents === 0) {
+      return null;
+    }
 
-    const payee = row['Payee'] || row['Recipient'] || 'Unknown';
-    const description = row['Reference'] || row['Note'] || '';
+    // Description
+    const description = row['Verwendungszweck'] || row['Beschreibung'] || '';
 
-    const currency = row['Currency'] || 'EUR';
+    // Clean payee
+    const cleanedPayee = cleanPayee(payee || description);
 
-    const hashId = generateHashId(date, amountCents, payee, description);
+    // Generate synthetic ID
+    const crypto = require('crypto');
+    const hashInput = `${date}|${amountCents}|${cleanedPayee}`;
+    const externalId = crypto.createHash('md5').update(hashInput, 'utf-8').digest('hex');
 
     return {
       date,
       amountCents,
-      payee: payee.trim(),
+      payee: cleanedPayee || 'Unbekannt',
       description: description.trim(),
-      currency,
-      externalId: row['Transaction ID'] || null,
-      hashId,
+      currency: 'EUR',
+      externalId,
     };
   }
 }
-

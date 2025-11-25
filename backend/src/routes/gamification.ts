@@ -6,42 +6,33 @@
  */
 
 import { Router } from 'express';
-import { getGamificationSnapshot } from '../services/gamificationService';
+import { getGamificationSummary } from '../services/gamificationService';
 
 const router = Router();
 
 /**
  * GET /api/gamification
  * 
- * Returns gamification snapshot for the current user (XP, level, rank, streak, quests).
+ * Returns gamification summary for the current user (XP, rank, streak, quests).
  * 
  * For now, uses a single-user or dummy userId if auth is not implemented yet.
  */
-router.get('/gamification', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     // For now, use a single-user or dummy userId if auth is not implemented yet
     const userId = 'default';
     
-    // getGamificationSnapshot now always returns a valid snapshot (never throws)
-    const snapshot = getGamificationSnapshot(userId);
+    // getGamificationSummary always returns a valid summary (never throws)
+    const summary = await getGamificationSummary(userId);
     
-    res.json(snapshot);
+    res.json(summary);
   } catch (error: any) {
-    // This catch block is now defensive - getGamificationSnapshot should never throw,
+    // This catch block is defensive - getGamificationSummary should never throw,
     // but we handle it just in case
-    if (process.env.NODE_ENV !== 'production') {
-      console.error('[gamification] Unexpected error fetching snapshot:', error);
-    }
+    console.error('[gamification] Error computing summary', error);
     
-    // Fail soft with default snapshot
-    res.status(200).json({
-      xp: 0,
-      level: 1,
-      rankLabel: 'Bronze Budgeter',
-      streakDays: 0,
-      activeQuests: [],
-      recentlyCompletedQuests: [],
-    });
+    // Fail soft with default summary
+    res.status(500).json({ error: 'Failed to compute gamification summary' });
   }
 });
 
