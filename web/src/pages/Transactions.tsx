@@ -6,6 +6,7 @@ import { CATEGORY_OPTIONS } from '../lib/categories';
 import { UserRulesPanel } from '../components/UserRulesPanel';
 import { TransactionsHeaderStrip } from '../components/transactions/TransactionsHeaderStrip';
 import { TransactionCard } from '../components/transactions/TransactionCard';
+import { DraggableTransactionCard } from '../components/transactions/DraggableTransactionCard';
 import { groupTransactionsByDate } from '../lib/dateGrouping';
 
 export type ApiTransaction = {
@@ -612,7 +613,7 @@ export const Transactions: React.FC = () => {
                 {/* Transaction Cards */}
                 <div className="space-y-2">
                   {group.transactions.map(tx => (
-                    <TransactionCard
+                    <DraggableTransactionCard
                       key={tx.displayId}
                       transaction={tx}
                       isSelected={selectedIds.includes(tx.id)}

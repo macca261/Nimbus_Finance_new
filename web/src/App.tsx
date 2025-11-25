@@ -16,6 +16,8 @@ import { BudgetOverviewPage } from './features/budgets/components/BudgetOverview
 import { GoalsOverviewPage } from './features/goals/components/GoalsOverviewPage';
 import { Achievements } from './pages/Achievements';
 import { ToastContainer } from './lib/toast';
+import { DndContextProvider } from './components/goals/DndContextProvider';
+import { DndDropProvider } from './contexts/DndDropContext';
 
 const Budgets = () => <BudgetOverviewPage />;
 
@@ -27,10 +29,17 @@ const Accounts = () => <AccountsPage />;
 const Settings = () => <ComingSoon title="Settings" description="Passe Nimbus Finance an deine Bedürfnisse an." />;
 
 function App() {
+  const handleTransactionDropped = (transactionId: string, goalId: string, transaction: any) => {
+    // This will be handled by SidebarSavingsGoals component
+    // The dialog will be shown there
+  };
+
   return (
-    <BrowserRouter>
-      <ToastContainer />
-      <Routes>
+    <DndDropProvider>
+      <DndContextProvider onTransactionDropped={handleTransactionDropped}>
+        <BrowserRouter>
+        <ToastContainer />
+        <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/imports" element={<ImportsPage />} />
@@ -46,8 +55,10 @@ function App() {
         <Route path="/admin/imports" element={<AdminImports />} />
         <Route path="/review" element={<ReviewPage />} />
         <Route path="/review/sonstiges" element={<SonstigesCleanupPage />} />
-      </Routes>
-    </BrowserRouter>
+        </Routes>
+        </BrowserRouter>
+      </DndContextProvider>
+    </DndDropProvider>
   );
 }
 

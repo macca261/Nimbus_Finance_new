@@ -1,10 +1,12 @@
 import BetterSqlite3 from 'better-sqlite3';
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
 import { categorize } from './categorization';
+import { createSQLiteDatabase, type SQLiteDatabase } from './db/SQLiteDatabase';
+import type { IDatabase } from './db/IDatabase';
 import path from 'node:path'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
-import type { Transaction, UserOverrideRule, Source, TransferLink } from './types/core';
+import type { Transaction, UserOverrideRule, Source, TransferLink, CategorizationTrace } from './types/core';
 import type { NormalizedTransaction } from './types/transactions';
 import type { CategoryId } from './types/category';
 import { findMatchingOverride } from './overrides/userOverrides';
@@ -16,6 +18,8 @@ import * as accountsService from './services/accountsService';
 import { findReimbursementMatchForIncome, applyReimbursementFlags, classifyReimbursementLike } from './categorization/reimbursementMatcher';
 import { buildCategorizationExplanation } from './categorization/explanation';
 import { isCashWithdrawalLike } from './categorization/cashMatcher';
+import { categorizeTransaction } from './services/transactionCategorizationEngine';
+import { autoLinkExternalSavings } from './services/externalSavingsAutoLink';
 
 export type CanonicalRow = {
   publicId?: string;
@@ -183,6 +187,16 @@ export function ensureSchema(db: Database) {
   ensureColumn('ignoreForReimbursement', "ALTER TABLE transactions ADD COLUMN ignoreForReimbursement INTEGER DEFAULT 0", () => {
     console.log('[migrate] added column transactions.ignoreForReimbursement');
   });
+  // Categorization trace: JSON-serialized explanation of how the category was chosen
+  // Stores method (RULE/ML/LLM), confidence, and metadata (e.g., rule ID, LLM model, template ID)
+  // Privacy/GDPR: Does NOT store full prompts or reasoning text, only template IDs and base metrics
+  ensureColumn('categorization_trace', "ALTER TABLE transactions ADD COLUMN categorization_trace TEXT", () => {
+    console.log('[migrate] added column transactions.categorization_trace');
+  });
+  // Hybrid Savings: Flag for external savings transfers (Trade Republic, Scalable Capital, etc.)
+  ensureColumn('is_external_savings', "ALTER TABLE transactions ADD COLUMN is_external_savings INTEGER DEFAULT 0", () => {
+    console.log('[migrate] added column transactions.is_external_savings');
+  });
 
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS ux_tx_dedup
@@ -266,6 +280,12 @@ export function ensureSchema(db: Database) {
     addColumn('isPrimary', `ALTER TABLE accounts ADD COLUMN isPrimary INTEGER DEFAULT 0`);
     addColumn('isArchived', `ALTER TABLE accounts ADD COLUMN isArchived INTEGER DEFAULT 0`);
     addColumn('userId', `ALTER TABLE accounts ADD COLUMN userId TEXT DEFAULT 'default'`);
+    // Hybrid Savings: nature distinguishes BUDGET (liquid) from TRACKING (external assets)
+    addColumn('nature', `ALTER TABLE accounts ADD COLUMN nature TEXT DEFAULT 'BUDGET' CHECK(nature IN ('BUDGET', 'TRACKING'))`);
+    addColumn('institution_name', `ALTER TABLE accounts ADD COLUMN institution_name TEXT`);
+    addColumn('current_balance_cents', `ALTER TABLE accounts ADD COLUMN current_balance_cents INTEGER DEFAULT 0`);
+    addColumn('is_closed', `ALTER TABLE accounts ADD COLUMN is_closed INTEGER DEFAULT 0`);
+    addColumn('last_synced_at', `ALTER TABLE accounts ADD COLUMN last_synced_at TEXT`);
     // SQLite doesn't allow non-constant defaults in ALTER TABLE, so add without default and backfill
     if (!colNames.has('updatedAt')) {
       try {
@@ -411,6 +431,87 @@ export function ensureSchema(db: Database) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_user_quest_states_questId ON user_quest_states(questId);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_user_quest_states_status ON user_quest_states(status);`);
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ux_user_quest_states_user_quest ON user_quest_states(userId, questId);`);
+
+  // Hybrid Savings: Buckets (Virtual Envelopes) table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS buckets (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      target_amount_cents INTEGER,
+      target_date TEXT,
+      current_balance_cents INTEGER DEFAULT 0,
+      gamification_asset_id TEXT,
+      is_hidden INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+      updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_buckets_is_hidden ON buckets(is_hidden);`);
+
+  // Hybrid Savings: Bucket movements (for Soft Savings ledger)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bucket_movements (
+      id TEXT PRIMARY KEY,
+      bucket_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      memo TEXT,
+      origin_type TEXT CHECK(origin_type IN ('INCOME', 'TRANSFER_FROM_BUCKET', 'MANUAL')),
+      origin_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+      FOREIGN KEY(bucket_id) REFERENCES buckets(id) ON DELETE CASCADE
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_bucket_movements_bucket_id ON bucket_movements(bucket_id);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_bucket_movements_date ON bucket_movements(date DESC);`);
+
+  // Hybrid Savings: Gamification log for City Builder
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS gamification_log (
+      id TEXT PRIMARY KEY,
+      goal_id TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK(event_type IN ('CONSTRUCT', 'DECAY', 'REPAIR', 'BONUS', 'LEVEL_UP')),
+      change_amount INTEGER,
+      metadata_json TEXT,
+      timestamp TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP)
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_gamification_log_goal_id ON gamification_log(goal_id);`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_gamification_log_timestamp ON gamification_log(timestamp DESC);`);
+
+  // Hybrid Savings: View for unified goal progress (virtual + external)
+  db.exec(`
+    CREATE VIEW IF NOT EXISTS view_hybrid_goal_status AS
+    SELECT 
+      g.id as goal_id,
+      g.name,
+      g."targetCents" as target_amount_cents,
+      COALESCE(b.current_balance_cents, 0) as virtual_balance,
+      COALESCE((
+        SELECT SUM(a.current_balance_cents)
+        FROM accounts a
+        WHERE a.nature = 'TRACKING'
+          AND json_extract(g."linkedAccountIds", '$') IS NOT NULL
+          AND EXISTS (
+            SELECT 1 FROM json_each(g."linkedAccountIds") je
+            WHERE je.value = a.id
+          )
+      ), 0) as external_balance,
+      (COALESCE(b.current_balance_cents, 0) + 
+       COALESCE((
+         SELECT SUM(a.current_balance_cents)
+         FROM accounts a
+         WHERE a.nature = 'TRACKING'
+           AND json_extract(g."linkedAccountIds", '$') IS NOT NULL
+           AND EXISTS (
+             SELECT 1 FROM json_each(g."linkedAccountIds") je
+             WHERE je.value = a.id
+           )
+       ), 0)) as total_progress_cents
+    FROM "Goal" g
+    LEFT JOIN buckets b ON json_extract(g."linkedAccountIds", '$[0]') = b.id
+    WHERE g."isActive" = 1;
+  `);
 }
 
 export function initDb(conn: Database): void {
@@ -457,7 +558,15 @@ export function prepareDb(conn: Database): void {
 
 let persistentDb = openDb()
 prepareDb(persistentDb)
-export let db: Database = persistentDb
+export let db: Database = persistentDb;
+
+// Database abstraction layer - prepare for future Postgres/Prisma support
+// Export the raw better-sqlite3 instance for legacy code
+export const rawDb: Database = db;
+
+// Export the abstracted database interface for new code
+// This is the first step towards a pluggable DAL for future Postgres/Prisma support
+export const database: IDatabase = createSQLiteDatabase(db);
 
 export function replaceDb(newDb: Database): void {
   persistentDb = newDb
@@ -724,6 +833,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       category_source,
       category_explanation,
       category_rule_id,
+      categorization_trace,
       direction,
       bankProfile,
       fingerprint,
@@ -752,7 +862,8 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       bankReferenceId,
       isPassThrough,
       passThroughGroupId,
-      isCashWithdrawal
+      isCashWithdrawal,
+      is_external_savings
     ) VALUES (
       @publicId,
       @bookingDate,
@@ -772,6 +883,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       @categorySource,
       @categoryExplanation,
       @categoryRuleId,
+      @categorizationTrace,
       @direction,
       @bankProfile,
       @fingerprint,
@@ -800,7 +912,8 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       @bankReferenceId,
       @isPassThrough,
       @passThroughGroupId,
-      @isCashWithdrawal
+      @isCashWithdrawal,
+      @is_external_savings
     )
   `);
 
@@ -1409,6 +1522,30 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         base.categoryConfidence = result.confidence;
         base.categoryExplanation = result.explanation ?? null;
         base.categoryRuleId = result.ruleId ?? null;
+        
+        // Create categorization trace for explainable AI UX
+        // This prepares Nimbus for future Pro tier features
+        let trace: CategorizationTrace | null = null;
+        if (result.source === 'rule' && result.ruleId) {
+          trace = {
+            method: 'RULE',
+            confidence: Math.round((result.confidence ?? 0) * 100),
+            ruleMatch: result.ruleId,
+          };
+        } else if (result.source === 'llm' || result.source === 'ai') {
+          trace = {
+            method: 'LLM',
+            confidence: Math.round((result.confidence ?? 0) * 100),
+            llmModel: 'gpt-4o-mini', // Default model, can be made configurable
+            llmPromptTemplateId: 'category-suggestion-v1',
+          };
+        } else if (result.source === 'ml' || result.source === 'heuristic') {
+          trace = {
+            method: 'ML',
+            confidence: Math.round((result.confidence ?? 0) * 100),
+          };
+        }
+        (base as any).categorizationTrace = trace;
       }
     }
     
@@ -1601,6 +1738,59 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         }
       }
     }
+
+    // Hybrid Savings: Detect external savings transfers (Trade Republic, Scalable Capital, etc.)
+    // This runs after categorization but before final insert
+    for (const base of normalizedBatch) {
+      // Skip if already marked as internal transfer, refund, or reimbursement
+      if (base.isInternalTransfer || base.isRefund || base.isRefunded || base.isReimbursement) {
+        continue;
+      }
+
+      // Only check outgoing transactions
+      if (base.amountCents >= 0) {
+        continue;
+      }
+
+      const tceResult = categorizeTransaction({
+        payee: base.payee,
+        memo: base.memo,
+        amountCents: base.amountCents,
+        accountId: base.accountId,
+      });
+
+      if (tceResult.isExternalSavings) {
+        (base as any).is_external_savings = true;
+        
+        // Auto-link to tracking account
+        try {
+          const autoLinkResult = autoLinkExternalSavings(conn, {
+            publicId: base.publicId,
+            payee: base.payee,
+            memo: base.memo,
+            amountCents: base.amountCents,
+            accountId: base.accountId,
+          });
+
+          if (autoLinkResult && process.env.NODE_ENV !== 'production') {
+            console.log('[hybridSavings] auto-linked external savings', {
+              publicId: base.publicId,
+              accountId: autoLinkResult.accountId,
+              accountCreated: autoLinkResult.accountCreated,
+              transactionsUpdated: autoLinkResult.transactionsUpdated,
+            });
+          }
+        } catch (err) {
+          // Log but don't fail - auto-linking is best-effort
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[hybridSavings] auto-link failed', {
+              publicId: base.publicId,
+              error: (err as Error)?.message,
+            });
+          }
+        }
+      }
+    }
     
     // Insert all normalized rows
     for (const base of normalizedBatch) {
@@ -1623,6 +1813,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         categorySource: base.categorySource,
         categoryExplanation: base.categoryExplanation,
         categoryRuleId: base.categoryRuleId,
+        categorizationTrace: (base as any).categorizationTrace ? JSON.stringify((base as any).categorizationTrace) : null,
         direction: base.direction,
         bankProfile: base.bankProfile,
         fingerprint: base.fingerprint,
@@ -1652,6 +1843,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         isPassThrough: base.isPassThrough ? 1 : 0,
         passThroughGroupId: base.passThroughGroupId,
         isCashWithdrawal: base.isCashWithdrawal ? 1 : 0,
+        is_external_savings: (base as any).is_external_savings ? 1 : 0,
       });
 
       if ((info as any).changes === 1) inserted++;
@@ -1690,7 +1882,8 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
   // This ensures we can find both the bank and PayPal accounts
   // Note: detectPaymentProviderFunding is synchronous (better-sqlite3)
   try {
-    detectPaymentProviderFunding(conn, { windowDays: 2 });
+    // Use database abstraction for payment provider detection
+    detectPaymentProviderFunding(database, { windowDays: 2 });
   } catch (error: any) {
     // Log but don't fail - detection is best-effort
     if (process.env.NODE_ENV !== 'production') {
@@ -1725,6 +1918,7 @@ export function clearAll(conn: Database = db) {
 // Seed accounts table based on distinct accounts seen in transactions
 export function seedAccountsFromExistingTransactions(conn: Database = db): void {
   // Collect distinct account keys from transactions, including source profile for payment provider detection
+  // Note: This function still uses raw Database for now, but calls accountsService which uses IDatabase
   const rows = conn.prepare(`
     SELECT DISTINCT
       COALESCE(NULLIF(TRIM(accountId), ''), NULL) AS accountId,
@@ -1750,7 +1944,9 @@ export function seedAccountsFromExistingTransactions(conn: Database = db): void 
       if (!id) continue;
       
       // Check if account already exists
-      const existing = accountsService.getAccountById(conn, id);
+      // Note: conn is BetterSqliteDatabase, but accountsService now uses IDatabase
+      // For now, we'll use rawDb for legacy code paths, but convert to database abstraction
+      const existing = accountsService.getAccountById(database, id);
       if (existing) {
         // Account exists - check if it should be upgraded to PAYMENT_PROVIDER
         if (existing.type !== 'PAYMENT_PROVIDER') {
@@ -1759,7 +1955,7 @@ export function seedAccountsFromExistingTransactions(conn: Database = db): void 
           if (accountsService.shouldBePaymentProviderAccount(accountName, importSource)) {
             // Upgrade existing account to PAYMENT_PROVIDER (idempotent)
             try {
-              conn.prepare(`UPDATE accounts SET type = 'PAYMENT_PROVIDER', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`).run(id);
+              database.execute(`UPDATE accounts SET type = 'PAYMENT_PROVIDER', updatedAt = CURRENT_TIMESTAMP WHERE id = ?`, [id]);
               if (process.env.NODE_ENV !== 'production') {
                 console.log('[seedAccounts] Upgraded account to PAYMENT_PROVIDER', { id, name: accountName });
               }
@@ -1778,7 +1974,7 @@ export function seedAccountsFromExistingTransactions(conn: Database = db): void 
       const importSource = r.source === 'csv_paypal' ? 'csv_paypal' : r.sourceProfile || null;
       
       try {
-        accountsService.createAccount(conn, {
+        accountsService.createAccount(database, {
           id,
           name,
           iban: iban || undefined,

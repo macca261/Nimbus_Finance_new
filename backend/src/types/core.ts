@@ -2,6 +2,21 @@ import type { CategoryId } from './category';
 
 export type Source = 'csv_bank' | 'csv_paypal' | 'api_tink' | 'manual';
 
+/**
+ * CategorizationTrace - Explanation of how a transaction category was chosen
+ * 
+ * This prepares Nimbus for explainable AI UX and future Pro tier features.
+ * Stores method (RULE/ML/LLM), confidence, and metadata without storing full prompts
+ * (GDPR/privacy requirement: only template IDs and base metrics).
+ */
+export interface CategorizationTrace {
+  method: 'RULE' | 'ML' | 'LLM';
+  confidence: number; // 0–100
+  ruleMatch?: string; // e.g., 'rewe-supermarket'
+  llmModel?: string; // e.g., 'gpt-4o-mini'
+  llmPromptTemplateId?: string; // short ID for the template used, NOT full prompt text
+}
+
 export interface Transaction {
   id: string;
   source: Source;
@@ -27,7 +42,7 @@ export interface Transaction {
   refundGroupId?: string | null;
   isInternalTransfer?: boolean;
   internalTransferDirection?: 'out' | 'in' | null;
-  internalTransferKind?: 'savings' | 'wallet' | 'other' | null;
+  internalTransferKind?: 'savings' | 'wallet' | 'other' | 'payment_provider_funding' | null;
   internalTransferGroupId?: string | null;
   isReimbursement?: boolean;
   reimbursementRole?: 'payer' | 'receiver' | null;
@@ -40,6 +55,8 @@ export interface Transaction {
   passThroughGroupId?: string | null;
   isCashWithdrawal?: boolean;
   ignoreForReimbursement?: boolean;
+  pairedTransactionId?: string | null; // Links funding leg to canonical expense (e.g., payment provider funding)
+  categorizationTrace?: CategorizationTrace | null; // Explanation of how category was chosen
 }
 
 export interface TransferLink {

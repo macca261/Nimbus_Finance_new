@@ -1,4 +1,5 @@
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
+import type { IDatabase } from '../db/IDatabase';
 import type { NormalizedCanonicalRow } from '../db';
 import * as accountsService from './accountsService';
 
@@ -435,8 +436,7 @@ const PAYMENT_PROVIDERS: PaymentProviderConfig[] = [
  */
 export interface DetectedTransfer {
   transactionId: string;
-  fromAccountId: string;
-  toAccountId: string;
+  pairedTransactionId: string; // Links to the provider transaction (the actual expense)
   kind: 'payment_provider_funding';
   confidence: number;
   reason: string;
@@ -464,8 +464,13 @@ export interface DetectedTransfer {
  * @param opts - Options including windowDays (default: 2)
  * @returns Array of detected transfers
  */
+/**
+ * Detect payment provider funding transfers.
+ * 
+ * Refactored to use IDatabase abstraction for future database backend support.
+ */
 export function detectPaymentProviderFunding(
-  db: BetterSqliteDatabase,
+  db: IDatabase,
   opts: { windowDays?: number } = {},
 ): DetectedTransfer[] {
   const windowDays = opts.windowDays ?? 2;
@@ -540,7 +545,7 @@ export function detectPaymentProviderFunding(
         ? [...paymentProviderAccountIdsArray, providerNamePattern, providerNamePattern]
         : [providerNamePattern, providerNamePattern];
       
-      const bankTransactions = db.prepare(bankTransactionsQuery).all(...queryParams) as Array<{
+      const bankTransactions = db.query<{
         id: number;
         publicId: string;
         accountId: string;
@@ -553,6 +558,7 @@ export function detectPaymentProviderFunding(
       }>;
       
       // Filter to ensure they match the provider pattern (double-check with regex for robustness)
+      // GDPR GUARDRAIL: PII matching is confined to this backend service. Raw descriptions are never logged or exposed unnecessarily.
       const validBankTxs = bankTransactions.filter(bankTx => {
         const bankText = `${bankTx.purpose || ''} ${bankTx.counterpartName || ''}`.toLowerCase();
         return provider.namePattern.test(bankText);
@@ -593,20 +599,23 @@ export function detectPaymentProviderFunding(
           : 'SELECT NULL WHERE 1=0'; // No payment provider accounts, no candidates
         
         const providerCandidates = paymentProviderAccountIds.size > 0
-          ? db.prepare(providerCandidatesQuery).all(
-              ...paymentProviderAccountIdsArray,
-              amountAbs, // Match absolute amount
-              dateFrom.toISOString().slice(0, 10),
-              dateTo.toISOString().slice(0, 10),
-              bankTx.bookingDate,
-            ) as Array<{
+          ? db.query<{
               id: number;
               publicId: string;
               accountId: string;
               bookingDate: string;
               amountCents: number;
               isInternalTransfer: number | null;
-            }>
+            }>(
+              providerCandidatesQuery,
+              [
+                ...paymentProviderAccountIdsArray,
+                amountAbs, // Match absolute amount
+                dateFrom.toISOString().slice(0, 10),
+                dateTo.toISOString().slice(0, 10),
+                bankTx.bookingDate,
+              ]
+            )
           : [];
         
         // Only proceed if exactly one provider candidate (fail-safe: avoid mispairing)
@@ -615,38 +624,27 @@ export function detectPaymentProviderFunding(
           
           // CRITICAL: Mark the BANK transaction as internal transfer
           // The provider transaction remains a normal expense
-          db.prepare(`
+          // Architectural purity: Use pairedTransactionId to link the two legs, reserving fromAccountId/toAccountId
+          // for true user-initiated transfers between accounts
+          const providerTxPublicId = providerTx.publicId || String(providerTx.id);
+          db.execute(`
             UPDATE transactions
             SET 
               isInternalTransfer = 1,
-              fromAccountId = ?,
-              toAccountId = ?,
+              pairedTransactionId = ?,
               internalTransferKind = 'payment_provider_funding',
               internalTransferDirection = 'out',
               internalTransferGroupId = ?
             WHERE id = ?
-          `).run(
-            bankTx.accountId,
-            providerTx.accountId,
+          `, [
+            providerTxPublicId,
             `pp_${bankTx.accountId}_${providerTx.accountId}`,
             bankTx.id,
-          );
-          
-          // Also update fromAccountId and toAccountId columns if they exist
-          try {
-            db.prepare(`
-              UPDATE transactions
-              SET fromAccountId = ?, toAccountId = ?
-              WHERE id = ?
-            `).run(bankTx.accountId, providerTx.accountId, bankTx.id);
-          } catch {
-            // Columns might not exist yet, ignore
-          }
+          ]);
           
           detected.push({
             transactionId: bankTx.publicId || String(bankTx.id),
-            fromAccountId: bankTx.accountId,
-            toAccountId: providerTx.accountId,
+            pairedTransactionId: providerTxPublicId,
             kind: 'payment_provider_funding',
             confidence: 0.9,
             reason: `Payment provider funding: ${provider.key} (amount: ${amountAbs / 100} EUR)`,

@@ -19,6 +19,7 @@ import {
 import { Link, useLocation } from 'react-router-dom';
 import ThemeToggle from '../ThemeToggle';
 import { classnames } from '../../ui/tokens';
+import { SidebarSavingsGoals } from '../goals/SidebarSavingsGoals';
 
 type SidebarProps = {
   status: 'loading' | 'online' | 'offline';
@@ -106,6 +107,9 @@ export default function Sidebar({ status, open, onClose }: SidebarProps) {
               </Link>
             );
           })}
+
+          {/* Hybrid Savings Goals Section */}
+          <SidebarSavingsGoals />
 
           <div className="mt-6 space-y-1.5">
             <p className="px-3 text-xs font-medium uppercase tracking-wide text-slate-500">

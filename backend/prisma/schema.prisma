@@ -120,6 +120,15 @@ model Goal {
   linkedAccountIds String? // Array of account IDs (JSON string)
   linkedCategoryIds String? // Array of category IDs (JSON string)
   
+  // Hybrid Savings: Link to virtual bucket
+  linkedBucketId String? // FK to buckets table (virtual envelope)
+  
+  // Gamification State (City Builder)
+  buildingSkin String? // 'SKYSCRAPER_A', 'COTTAGE_B', etc.
+  buildingLevel Int     @default(1)
+  buildingHealth Int    @default(100) // 0-100%
+  lastContributionTs DateTime? // Last time money was added (for decay calculation)
+  
   // Metadata
   description String?
   isActive    Boolean  @default(true)
@@ -130,6 +139,7 @@ model Goal {
   @@index([type])
   @@index([targetDate])
   @@index([isActive])
+  @@index([linkedBucketId])
 }
 
 model Achievement {

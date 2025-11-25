@@ -1,14 +1,16 @@
 /**
  * QuestStrip Component
  * 
- * Displays 0-3 active quests as compact cards/chips that guide users
- * toward better financial organization. Makes Nimbus feel more game-like.
+ * Displays active quests as thin utility widgets that guide users
+ * toward better financial organization. Designed for horizontal layout
+ * with minimal vertical footprint.
  */
 
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, CheckCircle2 } from 'lucide-react';
-import type { Quest } from '../../hooks/useQuests';
+import { ArrowRight, Upload, CheckSquare2 } from 'lucide-react';
+import type { Quest, QuestKind } from '../../hooks/useQuests';
+import { DashboardWidget } from '../../components/dashboard/DashboardWidget';
 
 interface QuestStripProps {
   quests: Quest[];
@@ -48,15 +50,12 @@ export const QuestStrip: React.FC<QuestStripProps> = ({
   // Loading state: show skeleton chips
   if (isLoading) {
     return (
-      <section className="mb-6">
-        <div className="flex flex-wrap gap-3">
-          {[1, 2, 3].map(i => (
-            <div
-              key={i}
-              className="h-20 w-full sm:w-[calc(50%-0.375rem)] lg:w-[calc(33.333%-0.5rem)] rounded-2xl border border-nf-border-subtle bg-nf-bg-card-subtle animate-pulse"
-            />
-          ))}
-        </div>
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {[1, 2].map(i => (
+          <DashboardWidget key={i} className="h-24">
+            <div className="h-full animate-pulse bg-nf-bg-card-subtle rounded" />
+          </DashboardWidget>
+        ))}
       </section>
     );
   }
@@ -71,75 +70,90 @@ export const QuestStrip: React.FC<QuestStripProps> = ({
 
   // Empty state: show subtle "all done" message (optional)
   if (quests.length === 0) {
-    return (
-      <section className="mb-6">
-        <div className="rounded-2xl border border-emerald-200/50 bg-emerald-50/50 dark:border-emerald-500/30 dark:bg-emerald-500/10 px-4 py-3 text-center">
-          <div className="flex items-center justify-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
-            <CheckCircle2 className="h-4 w-4" />
-            <span>Alles erledigt 🎉</span>
-          </div>
-        </div>
-      </section>
-    );
+    return null; // Don't show empty state - keep dashboard clean
   }
 
-  // Render quest cards
-  return (
-    <section className="mb-6">
-      <div className="flex flex-wrap gap-3">
-        {quests.map(quest => {
-          const progressPercent = getProgressPercent(quest.progressCurrent, quest.progressTarget);
-          const hasProgress = quest.progressCurrent !== undefined && quest.progressTarget !== undefined;
+  // Get icon for quest type
+  const getQuestIcon = (kind: QuestKind) => {
+    switch (kind) {
+      case 'IMPORT':
+        return <Upload className="h-5 w-5 text-gray-300 flex-shrink-0" />;
+      case 'CLEANUP':
+        return <CheckSquare2 className="h-5 w-5 text-gray-300 flex-shrink-0" />;
+      default:
+        return <ArrowRight className="h-5 w-5 text-gray-300 flex-shrink-0" />;
+    }
+  };
 
-          return (
-            <div
-              key={quest.id}
-              className="group relative w-full sm:w-[calc(50%-0.375rem)] lg:w-[calc(33.333%-0.5rem)] rounded-2xl border border-nf-border-subtle bg-nf-bg-card p-4 shadow-card transition-all duration-200 hover:-translate-y-[1px] hover:border-nf-primary/30 hover:shadow-elevated"
-            >
-              {/* Title */}
-              <h3 className="text-sm font-semibold text-nf-text-main mb-1.5 line-clamp-1">
+  // Render quest cards as thin horizontal utility widgets
+  return (
+    <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {quests.map(quest => {
+        const progressPercent = getProgressPercent(quest.progressCurrent, quest.progressTarget);
+        const hasProgress = quest.progressCurrent !== undefined && quest.progressTarget !== undefined;
+
+        return (
+          <DashboardWidget
+            key={quest.id}
+            onClick={() => navigate(quest.ctaPath ?? quest.cta.href)}
+            className="h-24 max-h-24 flex items-center gap-3"
+          >
+            {/* Icon - Left */}
+            <div className="flex-shrink-0">
+              {getQuestIcon(quest.kind)}
+            </div>
+
+            {/* Content - Middle (flexible) */}
+            <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5">
+              {/* Label */}
+              <h3 className="text-xs font-medium uppercase tracking-wider text-gray-300 line-clamp-1">
                 {quest.title}
               </h3>
 
               {/* Description */}
-              <p className="text-xs text-nf-text-muted mb-3 line-clamp-2 min-h-[2.5rem]">
+              <p className="text-sm text-white line-clamp-1">
                 {quest.description}
               </p>
 
               {/* Progress indicator (if applicable) */}
               {hasProgress && quest.progressTarget! > 0 && (
-                <div className="mb-3">
-                  <div className="flex items-center justify-between gap-2 mb-1.5">
-                    <span className="text-[11px] text-nf-text-soft">
+                <div className="mt-1">
+                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                    <span className="text-[10px] text-gray-400">
                       {formatProgress(quest.progressCurrent, quest.progressTarget)}
                     </span>
-                    <span className="text-[11px] font-medium text-nf-text-muted tabular-nums">
+                    <span className="text-[10px] font-medium text-gray-300 tabular-nums">
                       {Math.round(progressPercent)}%
                     </span>
                   </div>
-                  {/* Tiny progress bar */}
-                  <div className="h-1.5 w-full rounded-full bg-nf-bg-card-subtle overflow-hidden">
+                  {/* Ultra-thin progress bar */}
+                  <div className="h-0.5 w-full rounded-full bg-slate-700/50 overflow-hidden">
                     <div
-                      className="h-full bg-nf-primary transition-all duration-300"
+                      className="h-full bg-indigo-500 transition-all duration-300"
                       style={{ width: `${progressPercent}%` }}
                     />
                   </div>
                 </div>
               )}
+            </div>
 
-              {/* CTA Button */}
+            {/* Action Button - Right */}
+            <div className="flex-shrink-0">
               <button
                 type="button"
-                onClick={() => navigate(quest.ctaPath ?? quest.cta.href)}
-                className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-nf-primary px-3 py-2 text-xs font-medium text-white transition hover:bg-nf-primary/90 hover:shadow-glow-primary focus:outline-none focus:ring-2 focus:ring-nf-primary focus:ring-offset-2"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(quest.ctaPath ?? quest.cta.href);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-2.5 py-1.5 text-xs font-medium text-indigo-300 transition hover:bg-indigo-500/20 hover:border-indigo-500/50 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-slate-900"
               >
-                <span>{quest.cta.label}</span>
-                <ArrowRight className="h-3.5 w-3.5" />
+                <span className="whitespace-nowrap">{quest.cta.label}</span>
+                <ArrowRight className="h-3 w-3 flex-shrink-0" />
               </button>
             </div>
-          );
-        })}
-      </div>
+          </DashboardWidget>
+        );
+      })}
     </section>
   );
 };

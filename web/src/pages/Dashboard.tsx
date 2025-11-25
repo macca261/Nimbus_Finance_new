@@ -18,6 +18,7 @@ import { MonthGlanceCard } from '../features/dashboard/components/MonthGlanceCar
 import { useMonthSummary } from '../hooks/useMonthSummary';
 import { QuestStrip } from '../features/quests/QuestStrip';
 import { useQuests } from '../hooks/useQuests';
+import { useGamificationData } from '../hooks/useGamificationData';
 
 const SHELL_CLASS = 'mx-auto w-full max-w-[1680px] px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12';
 
@@ -35,6 +36,7 @@ export const Dashboard: React.FC = () => {
   const coachStory = useCoachStory({ days: 30, autoFetch: true });
   const monthSummary = useMonthSummary({ autoFetch: true });
   const quests = useQuests();
+  const { data: gamification } = useGamificationData();
 
   // Navigation helper for Transactions page
   const navigateToTransactions = useCallback(
@@ -126,15 +128,24 @@ export const Dashboard: React.FC = () => {
         <div className={SHELL_CLASS}>
           {/* Dashboard Grid Layout - Consistent full/half-width system for future drag-and-drop */}
           <div className="py-4 sm:py-5 space-y-4 sm:space-y-5">
-            {/* Quest Strip - Half-width cards in a row (2 columns on desktop) */}
-            <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <QuestStrip
-                quests={quests.quests}
-                isLoading={quests.isLoading}
-                error={quests.error}
-                onRefresh={quests.refetch}
-              />
-            </section>
+            {/* Gamification Pill - Subtle rank/XP indicator */}
+            {gamification && (
+              <div className="flex items-center justify-end">
+                <div className="inline-flex items-center gap-2 rounded-full bg-nf-surface-muted px-3 py-1 text-xs text-nf-text-muted border border-nf-border-subtle">
+                  <span className="font-medium">{gamification.rankLabel}</span>
+                  <span>·</span>
+                  <span>{gamification.xp} XP</span>
+                </div>
+              </div>
+            )}
+            
+            {/* Quest Strip - Integrated, thinner cards (2 columns on desktop) */}
+            <QuestStrip
+              quests={quests.quests}
+              isLoading={quests.isLoading}
+              error={quests.error}
+              onRefresh={quests.refetch}
+            />
 
             {/* Row 1: Wallet Overview - Full Width */}
             <section className="col-span-full">

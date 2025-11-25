@@ -3,13 +3,15 @@ import crypto from 'node:crypto';
 import multer from 'multer';
 import { parseBankCsv, ParseBankCsvError } from '../parser/parseBankCsv';
 import { PayPalParseError } from '../parser/paypal';
-import { recordImport, getAllOverrideRules, getRecentImports, db as defaultDb } from '../db';
+import { recordImport, getAllOverrideRules, getRecentImports, db as defaultDb, insertTransactions } from '../db';
 import { persistTransactions } from '../services/importCsv';
 import { categorize } from '../categorization';
 import { toNormalizedTransaction } from '../services/normalizeTransaction';
 import { findMatchingOverride } from '../overrides/userOverrides';
 import type { Transaction } from '../types/core';
 import { runTransferMatching } from '../services/transferMatching';
+import { ImportService } from '../import/ImportService';
+import { toCanonicalRow } from '../import/adapter';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -381,6 +383,105 @@ const multerErrorHandler = (err: any, req: any, res: any, next: any) => {
 };
 
 importRouter.post('/', upload.single('file'), multerErrorHandler, handleImport);
+
+// New streaming import endpoint (uses Strategy Pattern)
+importRouter.post('/stream', upload.single('file'), multerErrorHandler, async (req, res) => {
+  const startTime = Date.now();
+  
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({
+        code: 'BAD_REQUEST',
+        message: 'No file uploaded',
+      });
+    }
+
+    console.info('[import/stream] start', {
+      fileName: req.file.originalname,
+      fileSize: req.file.buffer.length,
+    });
+
+    const importService = new ImportService();
+    const result = await importService.detectAndParseBuffer(req.file.buffer);
+
+    if (result.transactions.length === 0) {
+      return res.status(400).json({
+        code: 'IMPORT_EMPTY',
+        message: 'Die Datei enthält keine erkennbaren Umsätze.',
+        bank: result.bank,
+      });
+    }
+
+    // Convert to canonical rows
+    const batchId = crypto.randomUUID();
+    const filename = req.file.originalname || 'upload.csv';
+    const canonicalRows = result.transactions.map(tx => 
+      toCanonicalRow(tx, filename, batchId)
+    );
+
+    // Insert into database (deduplication handled by fingerprint unique index)
+    const db = (req.app as any)?.locals?.db ?? defaultDb;
+    const { inserted, duplicates } = insertTransactions(canonicalRows, db);
+
+    // Record import metadata
+    const importId = recordImport(
+      {
+        profileId: result.bank,
+        fileName: filename,
+        confidence: 1.0, // High confidence for detected strategies
+        transactionCount: result.transactions.length,
+        warnings: result.skippedRows > 0 
+          ? [`${result.skippedRows} Zeilen übersprungen`] 
+          : [],
+        batchId,
+      },
+      db
+    );
+
+    const duration = Date.now() - startTime;
+
+    console.info('[import/stream] complete', {
+      bank: result.bank,
+      totalRows: result.totalRows,
+      transactions: result.transactions.length,
+      inserted,
+      duplicates,
+      categorized: result.categorizedCount,
+      duration: `${duration}ms`,
+    });
+
+    return res.json({
+      success: true,
+      bank: result.bank,
+      totalRows: result.totalRows,
+      transactions: result.transactions.length,
+      inserted,
+      duplicates,
+      skipped: result.skippedRows,
+      categorized: result.categorizedCount,
+      importId,
+      duration: `${duration}ms`,
+      message: `Importiert ${inserted} Transaktionen von ${result.bank}. ${result.categorizedCount} wurden automatisch kategorisiert.`,
+    });
+  } catch (err: any) {
+    console.error('[import/stream] error', {
+      error: err?.message,
+      stack: err?.stack,
+    });
+
+    if (err?.message?.includes('Unknown bank format')) {
+      return res.status(400).json({
+        code: 'UNKNOWN_FORMAT',
+        message: err.message,
+      });
+    }
+
+    return res.status(500).json({
+      code: 'IMPORT_FAILED',
+      message: err?.message || 'Import fehlgeschlagen',
+    });
+  }
+});
 
 importRouter.get('/history', (req, res) => {
   const db = (req.app as any)?.locals?.db ?? defaultDb;

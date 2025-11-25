@@ -1,4 +1,5 @@
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
+import type { IDatabase } from '../db/IDatabase';
 import crypto from 'node:crypto';
 
 export type AccountType = 'CHECKING' | 'SAVINGS' | 'CREDIT_CARD' | 'CASH' | 'OTHER' | 'PAYMENT_PROVIDER';
@@ -74,9 +75,11 @@ export function shouldBePaymentProviderAccount(name?: string | null, importSourc
 
 /**
  * List all accounts for a user (excluding archived by default).
+ * 
+ * Refactored to use IDatabase abstraction for future database backend support.
  */
 export function listAccounts(
-  db: BetterSqliteDatabase,
+  db: IDatabase,
   options: { includeArchived?: boolean; userId?: string } = {},
 ): Account[] {
   const userId = options.userId || DEFAULT_USER_ID;
@@ -84,7 +87,7 @@ export function listAccounts(
   
   // Check if accounts table exists and has required columns
   try {
-    const tableInfo = db.prepare(`PRAGMA table_info('accounts')`).all() as Array<{ name: string }>;
+    const tableInfo = db.query<{ name: string }>(`PRAGMA table_info('accounts')`);
     const hasAccountsTable = tableInfo.length > 0;
     if (!hasAccountsTable) {
       return []; // Table doesn't exist yet, return empty array
@@ -98,24 +101,22 @@ export function listAccounts(
     : 'WHERE userId = ? AND (isArchived = 0 OR isArchived IS NULL)';
   
   try {
-    const rows = db
-      .prepare(`SELECT id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, 
+    const rows = db.query<{
+      id: string;
+      name: string;
+      type: string;
+      iban: string | null;
+      accountNumber: string | null;
+      isPrimary: number | null;
+      isArchived: number | null;
+      userId: string;
+      createdAt: string;
+      updatedAt: string;
+    }>(`SELECT id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, 
                        COALESCE(updatedAt, createdAt, CURRENT_TIMESTAMP) AS updatedAt
                 FROM accounts 
                 ${whereClause}
-                ORDER BY isPrimary DESC, createdAt DESC`)
-      .all(userId) as Array<{
-        id: string;
-        name: string;
-        type: string;
-        iban: string | null;
-        accountNumber: string | null;
-        isPrimary: number | null;
-        isArchived: number | null;
-        userId: string;
-        createdAt: string;
-        updatedAt: string;
-      }>;
+                ORDER BY isPrimary DESC, createdAt DESC`, [userId]);
 
     return rows.map(row => ({
       id: row.id,
@@ -138,30 +139,30 @@ export function listAccounts(
 
 /**
  * Get a single account by ID.
+ * 
+ * Refactored to use IDatabase abstraction for future database backend support.
  */
 export function getAccountById(
-  db: BetterSqliteDatabase,
+  db: IDatabase,
   accountId: string,
   userId?: string,
 ): Account | null {
   const uid = userId || DEFAULT_USER_ID;
-  const row = db
-    .prepare(`SELECT id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, 
+  const row = db.queryOne<{
+    id: string;
+    name: string;
+    type: string;
+    iban: string | null;
+    accountNumber: string | null;
+    isPrimary: number | null;
+    isArchived: number | null;
+    userId: string;
+    createdAt: string;
+    updatedAt: string;
+  }>(`SELECT id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, 
                      COALESCE(updatedAt, createdAt, CURRENT_TIMESTAMP) AS updatedAt
               FROM accounts 
-              WHERE id = ? AND userId = ? AND (isArchived = 0 OR isArchived IS NULL)`)
-    .get(accountId, uid) as {
-      id: string;
-      name: string;
-      type: string;
-      iban: string | null;
-      accountNumber: string | null;
-      isPrimary: number | null;
-      isArchived: number | null;
-      userId: string;
-      createdAt: string;
-      updatedAt: string;
-    } | undefined;
+              WHERE id = ? AND userId = ? AND (isArchived = 0 OR isArchived IS NULL)`, [accountId, uid]);
 
   if (!row) {
     return null;
@@ -183,9 +184,11 @@ export function getAccountById(
 
 /**
  * Create a new account.
+ * 
+ * Refactored to use IDatabase abstraction for future database backend support.
  */
 export function createAccount(
-  db: BetterSqliteDatabase,
+  db: IDatabase,
   input: CreateAccountInput,
   userId?: string,
   importSource?: string | null,
@@ -216,16 +219,15 @@ export function createAccount(
 
   // If setting as primary, unset other primary accounts
   if (input.isPrimary) {
-    db.prepare(`UPDATE accounts SET isPrimary = 0 WHERE userId = ? AND isPrimary = 1`)
-      .run(uid);
+    db.execute(`UPDATE accounts SET isPrimary = 0 WHERE userId = ? AND isPrimary = 1`, [uid]);
   }
 
   // Insert account
   const now = new Date().toISOString();
-  db.prepare(`
+  db.execute(`
     INSERT INTO accounts (id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, updatedAt)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `, [
     id,
     input.name.trim(),
     accountType, // Use auto-detected or provided type
@@ -236,7 +238,7 @@ export function createAccount(
     uid,
     now,
     now,
-  );
+  ]);
 
   const account = getAccountById(db, id, uid);
   if (!account) {
@@ -248,9 +250,11 @@ export function createAccount(
 
 /**
  * Update an existing account.
+ * 
+ * Refactored to use IDatabase abstraction for future database backend support.
  */
 export function updateAccount(
-  db: BetterSqliteDatabase,
+  db: IDatabase,
   accountId: string,
   input: UpdateAccountInput,
   userId?: string,
@@ -301,8 +305,7 @@ export function updateAccount(
     
     // If setting as primary, unset other primary accounts
     if (input.isPrimary) {
-      db.prepare(`UPDATE accounts SET isPrimary = 0 WHERE userId = ? AND id != ? AND isPrimary = 1`)
-        .run(uid, accountId);
+      db.execute(`UPDATE accounts SET isPrimary = 0 WHERE userId = ? AND id != ? AND isPrimary = 1`, [uid, accountId]);
     }
   }
 
@@ -319,11 +322,7 @@ export function updateAccount(
 
   // Execute update
   const sql = `UPDATE accounts SET ${updates.join(', ')} WHERE id = ? AND userId = ?`;
-  const result = db.prepare(sql).run(...params);
-
-  if (result.changes === 0) {
-    throw new Error('Account not found or update failed');
-  }
+  db.execute(sql, params as any[]);
 
   const updated = getAccountById(db, accountId, uid);
   if (!updated) {
@@ -335,9 +334,11 @@ export function updateAccount(
 
 /**
  * Soft delete (archive) an account.
+ * 
+ * Refactored to use IDatabase abstraction for future database backend support.
  */
 export function deleteAccount(
-  db: BetterSqliteDatabase,
+  db: IDatabase,
   accountId: string,
   userId?: string,
 ): void {
@@ -352,10 +353,8 @@ export function deleteAccount(
   // Check if account has transactions (only if transactions table exists)
   let hasTransactions = false;
   try {
-    const txCount = db
-      .prepare(`SELECT COUNT(*) as count FROM transactions WHERE accountId = ?`)
-      .get(accountId) as { count: number };
-    hasTransactions = txCount.count > 0;
+    const txCount = db.queryOne<{ count: number }>(`SELECT COUNT(*) as count FROM transactions WHERE accountId = ?`, [accountId]);
+    hasTransactions = (txCount?.count ?? 0) > 0;
   } catch {
     // Transactions table doesn't exist (e.g., in tests), assume no transactions
     hasTransactions = false;
@@ -363,22 +362,24 @@ export function deleteAccount(
 
   if (hasTransactions) {
     // Soft delete: archive instead of hard delete to preserve FK integrity
-    db.prepare(`
+    db.execute(`
       UPDATE accounts 
       SET isArchived = 1, updatedAt = ?
       WHERE id = ? AND userId = ?
-    `).run(new Date().toISOString(), accountId, uid);
+    `, [new Date().toISOString(), accountId, uid]);
   } else {
     // Hard delete if no transactions (safe to remove)
-    db.prepare(`DELETE FROM accounts WHERE id = ? AND userId = ?`).run(accountId, uid);
+    db.execute(`DELETE FROM accounts WHERE id = ? AND userId = ?`, [accountId, uid]);
   }
 }
 
 /**
  * Get account by IBAN (for internal transfer detection).
+ * 
+ * Refactored to use IDatabase abstraction for future database backend support.
  */
 export function getAccountByIban(
-  db: BetterSqliteDatabase,
+  db: IDatabase,
   iban: string,
   userId?: string,
 ): Account | null {
@@ -389,23 +390,21 @@ export function getAccountByIban(
     return null;
   }
 
-  const row = db
-    .prepare(`SELECT id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, 
+  const row = db.queryOne<{
+    id: string;
+    name: string;
+    type: string;
+    iban: string | null;
+    accountNumber: string | null;
+    isPrimary: number | null;
+    isArchived: number | null;
+    userId: string;
+    createdAt: string;
+    updatedAt: string;
+  }>(`SELECT id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, 
                      COALESCE(updatedAt, createdAt, CURRENT_TIMESTAMP) AS updatedAt
               FROM accounts 
-              WHERE UPPER(REPLACE(iban, ' ', '')) = ? AND userId = ? AND (isArchived = 0 OR isArchived IS NULL)`)
-    .get(normalizedIban, uid) as {
-      id: string;
-      name: string;
-      type: string;
-      iban: string | null;
-      accountNumber: string | null;
-      isPrimary: number | null;
-      isArchived: number | null;
-      userId: string;
-      createdAt: string;
-      updatedAt: string;
-    } | undefined;
+              WHERE UPPER(REPLACE(iban, ' ', '')) = ? AND userId = ? AND (isArchived = 0 OR isArchived IS NULL)`, [normalizedIban, uid]);
 
   if (!row) {
     return null;
@@ -427,9 +426,11 @@ export function getAccountByIban(
 
 /**
  * Get account by account number (for internal transfer detection).
+ * 
+ * Refactored to use IDatabase abstraction for future database backend support.
  */
 export function getAccountByAccountNumber(
-  db: BetterSqliteDatabase,
+  db: IDatabase,
   accountNumber: string,
   userId?: string,
 ): Account | null {
@@ -440,23 +441,21 @@ export function getAccountByAccountNumber(
     return null;
   }
 
-  const row = db
-    .prepare(`SELECT id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, 
+  const row = db.queryOne<{
+    id: string;
+    name: string;
+    type: string;
+    iban: string | null;
+    accountNumber: string | null;
+    isPrimary: number | null;
+    isArchived: number | null;
+    userId: string;
+    createdAt: string;
+    updatedAt: string;
+  }>(`SELECT id, name, type, iban, accountNumber, isPrimary, isArchived, userId, createdAt, 
                      COALESCE(updatedAt, createdAt, CURRENT_TIMESTAMP) AS updatedAt
               FROM accounts 
-              WHERE accountNumber = ? AND userId = ? AND (isArchived = 0 OR isArchived IS NULL)`)
-    .get(normalized, uid) as {
-      id: string;
-      name: string;
-      type: string;
-      iban: string | null;
-      accountNumber: string | null;
-      isPrimary: number | null;
-      isArchived: number | null;
-      userId: string;
-      createdAt: string;
-      updatedAt: string;
-    } | undefined;
+              WHERE accountNumber = ? AND userId = ? AND (isArchived = 0 OR isArchived IS NULL)`, [normalized, uid]);
 
   if (!row) {
     return null;

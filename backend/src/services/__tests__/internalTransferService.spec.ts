@@ -192,6 +192,7 @@ describe('internalTransferService', () => {
           internalTransferGroupId TEXT,
           fromAccountId TEXT,
           toAccountId TEXT,
+          pairedTransactionId TEXT,
           createdAt TEXT DEFAULT (CURRENT_TIMESTAMP)
         );
       `);
@@ -239,21 +240,21 @@ describe('internalTransferService', () => {
       const detected = detectPaymentProviderFunding(db, { windowDays: 2 });
 
       // Verify bank transaction was marked as internal transfer
+      // Architectural purity: payment provider funding uses pairedTransactionId, not fromAccountId/toAccountId
       const bankTx = db.prepare(`
-        SELECT isInternalTransfer, internalTransferKind, fromAccountId, toAccountId
+        SELECT isInternalTransfer, internalTransferKind, pairedTransactionId
         FROM transactions
         WHERE id = ?
       `).get(bankTxId) as {
         isInternalTransfer: number;
         internalTransferKind: string | null;
-        fromAccountId: string | null;
-        toAccountId: string | null;
+        pairedTransactionId: string | null;
       };
 
       expect(bankTx.isInternalTransfer).toBe(1);
       expect(bankTx.internalTransferKind).toBe('payment_provider_funding');
-      expect(bankTx.fromAccountId).toBe('bank-acc');
-      expect(bankTx.toAccountId).toBe('paypal-acc');
+      // Verify pairedTransactionId links to the provider transaction
+      expect(bankTx.pairedTransactionId).toBe('paypal-tx-1');
 
       // Verify PayPal transaction remains non-internal
       const paypalTx = db.prepare(`
@@ -267,8 +268,7 @@ describe('internalTransferService', () => {
       // Verify detection result
       expect(detected.length).toBe(1);
       expect(detected[0].kind).toBe('payment_provider_funding');
-      expect(detected[0].fromAccountId).toBe('bank-acc');
-      expect(detected[0].toAccountId).toBe('paypal-acc');
+      expect(detected[0].pairedTransactionId).toBe('paypal-tx-1');
     });
 
     it('should not detect if no PayPal account exists', () => {

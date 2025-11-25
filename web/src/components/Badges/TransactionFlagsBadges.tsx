@@ -39,17 +39,12 @@ export const TransactionFlagsBadges: React.FC<Props> = ({
     // Payment provider funding: bank → PayPal funding transfer
     // Show a specific badge for this case
     if (internalTransferKind === 'payment_provider_funding') {
-      const providerName = toAccountName?.toLowerCase().includes('paypal') ? 'PayPal' : 'Zahlungsdienstleister';
-      const label = fromAccountName && toAccountName
-        ? `${fromAccountName} → ${providerName}-Aufladung`
-        : `${providerName}-Aufladung`;
-      
       return (
         <span
           className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
-          title={`Bank → ${providerName} Aufladung – in den Auswertungen als interner Transfer behandelt und von den Ausgaben ausgenommen. Nur die ${providerName} → Händler Buchung zählt als Ausgabe.`}
+          title="Diese Buchung ist die interne Belastung deines Bankkontos zur Finanzierung einer Zahlung über einen Zahlungsanbieter (z.B. PayPal) und wird nicht als Ausgabe doppelt gezählt."
         >
-          {label}
+          Finanzierungsbuchung
         </span>
       );
     }
