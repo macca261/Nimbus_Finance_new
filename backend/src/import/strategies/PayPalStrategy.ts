@@ -34,6 +34,12 @@ export class PayPalStrategy implements ImportStrategy {
   }
 
   mapRow(row: any): NormalizedTransaction | null {
+    // CRITICAL: Skip 'Memo' rows to prevent duplication
+    // PayPal includes duplicate "Memo" rows that don't affect balance
+    if (row['Auswirkung auf Guthaben'] === 'Memo' || row['Typ'] === 'Memo') {
+      return null;
+    }
+
     // Required fields
     const dateStr = row['Datum'] || row['Date'] || row['Buchungsdatum'] || '';
     

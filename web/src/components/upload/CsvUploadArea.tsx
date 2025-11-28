@@ -19,6 +19,7 @@ export interface CsvUploadAreaProps {
 
 type ImportResponse = {
   code?: string;
+  error?: string;
   message?: string;
   profileId?: string;
   confidence?: number;
@@ -32,6 +33,8 @@ type ImportResponse = {
   reasons?: string[];
   rowCount?: number;
   details?: string;
+  reason?: 'all_duplicates' | 'parse_error' | 'unsupported_format' | null; // Reason code for import result
+  success?: boolean;
 };
 
 export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
@@ -39,7 +42,7 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
   variant = 'compact',
   title = 'CSV hochladen',
   description = 'Unterstützt: Deutsche Banken, Sparkasse, ING, PayPal, Tink (CSV-Export) und weitere.',
-  supportedHint = 'Drag & Drop oder Klick, max. 10 MB, *.csv',
+  supportedHint = 'Drag & Drop oder Klick, max. 50 MB, *.csv',
   className,
 }) => {
   const inputId = useId();
@@ -59,8 +62,8 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
       setError('Bitte eine CSV-Datei auswählen.');
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      setError('Datei ist zu groß (max. 10MB).');
+    if (file.size > 50 * 1024 * 1024) {
+      setError('Datei ist zu groß (max. 50MB).');
       return;
     }
 
@@ -77,42 +80,111 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
       // Always try to read JSON, even on error
       let data: ImportResponse | null = null;
       try {
-        data = (await res.json()) as ImportResponse;
-      } catch {
-        data = null;
+        const text = await res.text();
+        if (text) {
+          data = JSON.parse(text) as ImportResponse;
+        }
+      } catch (jsonError) {
+        // If JSON parsing fails, create a structured error
+        if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console
+          console.error('[CsvUploadArea] Failed to parse response JSON', {
+            status: res.status,
+            statusText: res.statusText,
+            error: jsonError,
+          });
+        }
+        data = {
+          code: 'IMPORT_FAILED',
+          message: `Import fehlgeschlagen (Status ${res.status})`,
+          details: res.statusText || 'Ungültige Antwort vom Server.',
+        };
       }
 
       if (res.ok) {
-        const profileId = data?.profileId || 'unbekannt';
-        const inserted =
+        const insertedCount =
           data?.insertedCount ??
-          data?.imported ??
           data?.inserted ??
+          data?.imported ??
           0;
-        const message =
-          data?.message ||
-          `Profil: ${profileId}, ${inserted} neue Umsätze importiert.`;
-        setInfo(message);
-        toast(message, 'success');
-        await applyImportResult({ profileId, inserted });
-        onImported?.(data ?? undefined);
-        // Emit data mutation event to trigger refetch in other components (e.g., coach story)
-        emitDataMutated({ reason: 'imports:csv-uploaded' });
-        // Trigger achievement evaluation in background
-        void evaluateQuietly();
-        return;
+        const duplicateCount = data?.duplicateCount ?? data?.skippedCount ?? data?.skipped ?? 0;
+        const reason = data?.reason;
+
+        // Case A: New rows inserted
+        if (insertedCount > 0) {
+          const message = data?.message || `${insertedCount} neue Transaktion${insertedCount !== 1 ? 'en' : ''} importiert.`;
+          setInfo(message);
+          toast(message, 'success');
+          
+          // Trigger refetch of transaction data
+          emitDataMutated({ reason: 'imports:csv-uploaded' });
+          
+          // Trigger achievement evaluation in background
+          void evaluateQuietly();
+          
+          // Apply import result if store method exists
+          const profileId = data?.profileId || 'unbekannt';
+          if (applyImportResult) {
+            await applyImportResult({ profileId, inserted: insertedCount });
+          }
+          
+          onImported?.(data ?? undefined);
+          return;
+        }
+
+        // Case B: All duplicates (no new data)
+        if (insertedCount === 0 && duplicateCount > 0 && reason === 'all_duplicates') {
+          const message = data?.message || 'Keine neuen Transaktionen – alle Buchungen waren bereits vorhanden.';
+          setInfo(message);
+          toast(message, 'info');
+          onImported?.(data ?? undefined);
+          return;
+        }
+
+        // Case C: No rows but not explicitly duplicates
+        if (insertedCount === 0) {
+          const message = data?.message || 'Keine neuen Transaktionen importiert.';
+          setInfo(message);
+          toast(message, 'info');
+          onImported?.(data ?? undefined);
+          return;
+        }
       }
 
       // Handle error response
-      const err = data;
-      console.error('CSV import failed', {
-        status: res.status,
-        code: err?.code,
-        message: err?.message,
-        payload: err,
-      });
+      const err = data || {};
+      
+      // Safe error logging that won't throw
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        try {
+          const safeLogObj: Record<string, any> = {
+            status: res.status,
+            statusText: res.statusText || 'Unknown',
+          };
+          
+          // Safely extract error properties
+          try {
+            if (err && typeof err === 'object') {
+              safeLogObj.code = err.code || err.error || 'UNKNOWN';
+              safeLogObj.message = err.message || 'Unknown error';
+              if (err.details && typeof err.details === 'string') {
+                safeLogObj.details = err.details;
+              }
+            }
+          } catch (extractError) {
+            safeLogObj.parseError = 'Could not extract error details';
+          }
+          
+          console.error('[CsvUploadArea] CSV import failed', safeLogObj);
+        } catch (logError) {
+          // Fallback if console.error itself fails
+          console.error('[CsvUploadArea] CSV import failed - could not log details');
+        }
+      }
 
-      if (err?.code === 'IMPORT_EMPTY') {
+      // Handle specific error codes
+      if (err?.code === 'IMPORT_EMPTY' || err?.error === 'IMPORT_EMPTY') {
         const title = err.message ?? 'Keine gültigen Umsätze importiert.';
         const details: string[] = [];
         if (Array.isArray(err.reasons) && err.reasons.length > 0) {
@@ -127,7 +199,7 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
         return;
       }
 
-      if (err?.code === 'PAYPAL_PARSE_ERROR' || err?.code === 'BANK_PARSE_ERROR') {
+      if (err?.code === 'PAYPAL_PARSE_ERROR' || err?.code === 'BANK_PARSE_ERROR' || err?.error === 'PAYPAL_PARSE_ERROR' || err?.error === 'BANK_PARSE_ERROR') {
         const lines = [err.message ?? 'Die CSV-Datei konnte nicht interpretiert werden.'];
         if (err.details) {
           lines.push(String(err.details));
@@ -138,15 +210,49 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
         return;
       }
 
-      if (err?.code === 'BAD_REQUEST') {
+      if (err?.code === 'BAD_REQUEST' || err?.error === 'BAD_REQUEST') {
         const message = err.message ?? 'Ungültige Anfrage. Bitte überprüfe die Datei.';
         setError(message);
         toast(message, 'error');
         return;
       }
 
-      if (err?.code === 'IMPORT_FAILED') {
+      // Handle CSV_IMPORT_FAILED (from backend)
+      if (err?.code === 'CSV_IMPORT_FAILED' || err?.error === 'CSV_IMPORT_FAILED') {
+        let message = err.message || 'Import fehlgeschlagen. Bitte prüfe die Datei oder versuche es erneut.';
+        
+        // Handle specific reason codes
+        if (err.reason === 'parse_error') {
+          message = 'Die CSV konnte nicht vollständig gelesen werden. Bitte prüfe Format und Trennzeichen.';
+        } else if (err.reason === 'unsupported_format') {
+          message = 'Das Format der CSV-Datei wird nicht unterstützt.';
+        }
+        
+        const details = err.details ? `\n${err.details}` : '';
+        const fullMessage = `${message}${details}`;
+        setError(fullMessage);
+        toast(message, 'error');
+        return;
+      }
+
+      if (err?.code === 'IMPORT_FAILED' || err?.error === 'IMPORT_FAILED') {
         const message = err.message ?? 'Unbekannter Importfehler. Bitte versuche es erneut.';
+        const details = err.details ? `\n${err.details}` : '';
+        setError(`${message}${details}`);
+        toast(message, 'error');
+        return;
+      }
+
+      // Handle HTTP status codes
+      if (res.status === 404) {
+        const message = 'Import-Endpunkt nicht gefunden. Bitte überprüfe die Verbindung.';
+        setError(message);
+        toast(message, 'error');
+        return;
+      }
+
+      if (res.status === 500) {
+        const message = err?.message || err?.details || 'Server-Fehler beim Importieren. Bitte versuche es später erneut.';
         setError(message);
         toast(message, 'error');
         return;
@@ -154,12 +260,40 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
 
       // Fallback: show backend message if available, otherwise HTTP status
       const fallbackMessage = `Import fehlgeschlagen (HTTP ${res.status})`;
-      const message = err?.message ?? err?.code ?? fallbackMessage;
+      const message = err?.message || err?.details || err?.code || err?.error || fallbackMessage;
       setError(message);
       toast(message, 'error');
     } catch (e: any) {
-      console.error('CSV upload error', e);
-      setError(e?.message || 'Fehler beim Upload.');
+      // Network error or other fetch failures
+      try {
+        console.error('[CsvUploadArea] CSV upload error', {
+          error: e?.message || String(e),
+          name: e?.name,
+          stack: e?.stack?.substring(0, 200), // Truncate stack trace
+        });
+      } catch (logError) {
+        // Fallback if logging fails
+        console.error('[CsvUploadArea] CSV upload error - could not log details');
+      }
+      
+      let errorMessage = 'Fehler beim Upload.';
+      try {
+        if (e?.message) {
+          if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError') || e.message.includes('ERR_CONNECTION')) {
+            errorMessage = 'Verbindungsfehler. Bitte überprüfe, ob der Server läuft und versuche es erneut.';
+          } else if (e.message.includes('JSON')) {
+            errorMessage = 'Ungültige Server-Antwort. Bitte versuche es erneut.';
+          } else {
+            errorMessage = e.message.length > 100 ? e.message.substring(0, 100) + '...' : e.message;
+          }
+        }
+      } catch (msgError) {
+        // If error message processing fails, use default
+        errorMessage = 'Unbekannter Fehler beim Upload.';
+      }
+      
+      setError(errorMessage);
+      toast(errorMessage, 'error');
     } finally {
       setBusy(false);
     }
@@ -257,6 +391,11 @@ export const CsvUploadArea: React.FC<CsvUploadAreaProps> = ({
             Importe verwalten
           </Link>
         </div>
+      ) : null}
+      {!error && !info && !busy ? (
+        <p className="mt-3 text-center text-[11px] text-slate-500 dark:text-slate-400">
+          Deine CSV wird lokal analysiert – sensible Felder werden vor KI-Aufrufen automatisch gekürzt.
+        </p>
       ) : null}
     </div>
   );

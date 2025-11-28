@@ -9,7 +9,7 @@
  */
 
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
-import { categorizeTransaction } from './transactionCategorizationEngine';
+import { detectSavings } from './transactionCategorizationEngine';
 import crypto from 'node:crypto';
 
 export interface AutoLinkResult {
@@ -36,7 +36,7 @@ export async function autoLinkExternalSavings(
   }
 ): Promise<AutoLinkResult | null> {
   // Check if this is an external savings transfer
-  const categorization = categorizeTransaction(transaction);
+  const categorization = detectSavings(transaction.payee, transaction.memo);
   
   if (!categorization.isExternalSavings) {
     return null;

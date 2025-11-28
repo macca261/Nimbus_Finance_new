@@ -157,14 +157,15 @@ export function parseGermanDate(str: string): string {
 /**
  * Detect file encoding using chardet
  * 
- * Reads first 1KB for efficient detection.
- * Returns 'utf-8' or 'latin1' (ISO-8859-1)
+ * Reads first 4KB for efficient detection (statistically sufficient for headers).
+ * Prioritizes Windows-1252 for ambiguous cases (Excel defaults).
+ * Returns 'utf-8', 'latin1' (ISO-8859-1), or 'win1252' (Windows-1252)
  */
 export async function detectEncoding(filePath: string): Promise<string> {
   try {
-    // Read first 1KB for detection (as per requirements)
+    // Read first 4KB for detection (statistically sufficient for headers)
     const buffer = fs.readFileSync(filePath);
-    const sample = buffer.slice(0, Math.min(1024, buffer.length));
+    const sample = buffer.slice(0, Math.min(4096, buffer.length));
     
     const detected = chardet.detect(sample);
     
@@ -173,7 +174,12 @@ export async function detectEncoding(filePath: string): Promise<string> {
       const lower = detected.toLowerCase();
       
       // Map common encodings to our supported ones
-      if (lower.includes('iso-8859-1') || lower.includes('windows-1252') || lower.includes('latin1')) {
+      // Prioritize Windows-1252 for ambiguous cases (Excel defaults)
+      if (lower.includes('windows-1252') || lower.includes('win1252')) {
+        return 'win1252';
+      }
+      
+      if (lower.includes('iso-8859-1') || lower.includes('latin1')) {
         return 'latin1';
       }
       
@@ -182,11 +188,12 @@ export async function detectEncoding(filePath: string): Promise<string> {
       }
     }
     
-    // Default to UTF-8 if detection fails
-    return 'utf-8';
+    // Default to Windows-1252 for banking CSVs (Excel default)
+    // This handles ambiguous cases better than UTF-8
+    return 'win1252';
   } catch (err) {
-    console.warn('[import/utils] Failed to detect encoding, defaulting to UTF-8:', err);
-    return 'utf-8';
+    console.warn('[import/utils] Failed to detect encoding, defaulting to Windows-1252:', err);
+    return 'win1252';
   }
 }
 
@@ -214,8 +221,8 @@ export function readFirstLines(
       content = require('iconv-lite').decode(buffer, 'latin1');
     }
     
-    const lines = content.split(/\r?\n/).slice(0, lineCount);
-    return lines.filter(line => line.trim().length > 0);
+    // Keep original line numbers (including blank lines) so header row index aligns with actual file
+    return content.split(/\r?\n/).slice(0, lineCount);
   } catch (err) {
     console.warn('[import/utils] Failed to read first lines:', err);
     return [];

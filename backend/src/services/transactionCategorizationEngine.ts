@@ -1,3 +1,8 @@
+import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
+import type { CategoryDecision } from '@nimbus/shared/src/categorisation';
+import type { CanonicalTransaction } from '@nimbus/shared/src/types/canonical';
+import { categoriseWithRulesOnly } from '../categorisation/applyRules';
+
 /**
  * Transaction Categorization Engine (TCE)
  * 
@@ -90,36 +95,52 @@ export function detectSavings(payee: string | null, memo: string | null): Saving
   return null;
 }
 
-/**
- * Categorizes a transaction with full context
- * 
- * @param transaction - Transaction data
- * @returns Categorization result
- */
-export function categorizeTransaction(transaction: {
-  payee: string | null;
-  memo: string | null;
-  amountCents: number;
-  accountId?: string | null;
-}): {
-  categoryId?: string;
-  isExternalSavings: boolean;
-  suggestedEntity?: string;
-  confidence?: number;
-} {
-  const savingsResult = detectSavings(transaction.payee, transaction.memo);
-  
-  if (savingsResult && savingsResult.isExternalSavings) {
-    return {
-      categoryId: 'SAVINGS_GOAL',
-      isExternalSavings: true,
-      suggestedEntity: savingsResult.entity || undefined,
-      confidence: savingsResult.confidence,
-    };
-  }
+export function categorizeTransaction(
+  transactionId: string,
+  conn: BetterSqliteDatabase
+): CategoryDecision | null {
+  const row = conn
+    .prepare(`
+      SELECT bookingDate,
+             valueDate,
+             amountCents,
+             currency,
+             counterpartName,
+             counterpartyIban,
+             purpose,
+             rawCode
+      FROM transactions
+      WHERE id = ?
+    `)
+    .get(transactionId) as
+    | {
+        bookingDate: string | null;
+        valueDate: string | null;
+        amountCents: number | null;
+        currency: string | null;
+        counterpartName: string | null;
+        counterpartyIban: string | null;
+        purpose: string | null;
+        rawCode: string | null;
+      }
+    | undefined;
 
-  return {
-    isExternalSavings: false,
+  if (!row) return null;
+
+  const tx: CanonicalTransaction = {
+    id: transactionId,
+    bookingDate: row.bookingDate ?? new Date().toISOString().slice(0, 10),
+    valueDate: row.valueDate ?? undefined,
+    amount: Number(row.amountCents ?? 0) / 100,
+    currency: row.currency ?? 'EUR',
+    counterpartName: row.counterpartName ?? undefined,
+    counterpartIban: row.counterpartyIban ?? undefined,
+    counterpartBic: undefined,
+    purpose: row.purpose ?? undefined,
+    txType: undefined,
+    rawCode: row.rawCode ?? undefined,
   };
+
+  return categoriseWithRulesOnly(tx);
 }
 

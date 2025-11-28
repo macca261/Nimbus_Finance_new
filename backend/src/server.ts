@@ -16,6 +16,7 @@ import dashboardRouter from './routes/dashboard';
 import devResetRouter from './routes/dev-reset';
 import { mountAdminRoutes } from './routes/admin';
 import adminImportsRouter from './routes/admin-imports';
+import importsRouter from './routes/imports';
 import normalizerRouter from './routes/normalizer';
 import debugRouter from './routes/debug';
 import { accountsRouter } from './routes/accounts';
@@ -171,9 +172,10 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   }));
   app.options('*', cors());
 
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: true }));
-  app.use(express.text({ type: ['text/csv', 'text/plain'], limit: '20mb' }));
+  // Increase limit to 50MB to accommodate large CSV exports
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
+  app.use(express.text({ type: ['text/csv', 'text/plain'], limit: '50mb' }));
 
   // Health endpoint (mount early)
   app.get('/api/health', (_req, res) => {
@@ -184,6 +186,7 @@ export function createApp(deps?: { db?: any; parser?: Parser }) {
   app.use('/api/summary', summaryRouter);
   app.use('/api/achievements', achievementsRouter);
   app.use('/api/import', importRouter);
+  app.use('/api/imports', importsRouter);
   app.use('/api/paypal', paypalRouter);
   app.use('/api/overrides', overridesRouter);
   app.use('/api/transactions', transactionsRouter);

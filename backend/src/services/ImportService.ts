@@ -7,21 +7,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as crypto from 'crypto';
-import csv from 'csv-parser';
-import iconv from 'iconv-lite';
-import { Readable } from 'stream';
-import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
-import { rawDb } from '../db';
-import { detectEncoding, readFirstLines, findHeaderRow } from '../import/utils';
-import { ImportStrategy, NormalizedTransaction } from '../import/strategies/ImportStrategy';
-import { SparkasseStrategy } from '../import/strategies/SparkasseStrategy';
-import { IngStrategy } from '../import/strategies/IngStrategy';
-import { PayPalStrategy } from '../import/strategies/PayPalStrategy';
-import { DKBStrategy } from '../import/strategies/DKBStrategy';
-import { N26Strategy } from '../import/strategies/N26Strategy';
-import { CommerzbankStrategy } from '../import/strategies/CommerzbankStrategy';
-import { DKBOldStrategy } from '../import/strategies/DKBOldStrategy';
+import { Database as BetterSqliteDatabase } from 'better-sqlite3';
+import { rawDb, insertTransactions } from '../db';
+import { parseBankCsv } from '../csv/parseBankCsv';
+import type { CanonicalTransaction } from '@nimbus/shared/src/types/canonical';
+import type { DetectionScore } from '../csv/types';
 
 export interface ImportResult {
   success: boolean;
@@ -31,54 +21,12 @@ export interface ImportResult {
   errors: string[];
   pairedTransactions?: number; // Number of PayPal transactions paired with bank transactions
   potentialInternalTransfers?: number; // Number of potential internal transfers detected
+  reason?: 'all_duplicates' | 'parse_error' | 'unsupported_format' | null; // Reason code for import result
+  detectionScores?: DetectionScore[];
+  header?: string[];
 }
 
 export class ImportService {
-  private strategies: ImportStrategy[];
-
-  constructor() {
-    // Register all available strategies (order matters - more specific first)
-    this.strategies = [
-      new DKBOldStrategy(), // Check old DKB format before new format
-      new DKBStrategy(), // New DKB format (2024)
-      new SparkasseStrategy(),
-      new IngStrategy(),
-      new PayPalStrategy(),
-      new N26Strategy(),
-      new CommerzbankStrategy(),
-    ];
-  }
-
-  /**
-   * Detect which strategy matches the CSV file using "Header Hunter" algorithm
-   * Scans first 20 lines for known keywords to find the header row
-   */
-  private async detectStrategy(filePath: string): Promise<{ strategy: ImportStrategy; headerRowIndex: number } | null> {
-    // Step 1: Detect encoding first
-    const detectedEncoding = await detectEncoding(filePath);
-    const encoding = detectedEncoding === 'latin1' ? 'latin1' : 'utf-8';
-
-    // Step 2: Read first 20 lines with proper encoding
-    const lines = readFirstLines(filePath, 20, encoding);
-    
-    if (lines.length === 0) {
-      return null;
-    }
-
-    // Step 3: For each strategy, check if its required keywords exist in any line
-    for (const strategy of this.strategies) {
-      // Get required keywords from strategy (extract from matches logic)
-      // For now, we'll use the matches method on each line
-      for (let i = 0; i < lines.length; i++) {
-        if (strategy.matches(lines[i])) {
-          return { strategy, headerRowIndex: i };
-        }
-      }
-    }
-
-    return null;
-  }
-
   /**
    * Import CSV file into database
    */
@@ -110,7 +58,10 @@ export class ImportService {
 
       // Step 2: Detect encoding (already done in detectStrategy, but get it again for parsing)
       const detectedEncoding = await detectEncoding(filePath);
-      const encoding = detectedEncoding === 'latin1' ? 'latin1' : 'utf-8';
+      // Map win1252 to latin1 for iconv-lite (they're compatible for our use case)
+      const encoding = detectedEncoding === 'win1252' || detectedEncoding === 'latin1' 
+        ? 'latin1' 
+        : 'utf-8';
       
       // Calculate skip lines based on header row index
       const skipLines = headerRowIndex;
@@ -118,108 +69,294 @@ export class ImportService {
       // Step 3: Parse CSV
       const transactions: NormalizedTransaction[] = [];
       const errors: string[] = [];
+      let rowCount = 0;
+      let skippedCount = 0;
 
-      await new Promise<void>((resolve, reject) => {
-        const stream = fs.createReadStream(filePath)
-          .pipe(iconv.decodeStream(encoding))
-          .pipe(csv({
-            separator: strategy.csvOptions.separator,
-            skipLines: skipLines, // Use detected header row index
-            headers: true,
-            skipEmptyLines: true,
-            mapHeaders: ({ header }: { header: string }) => header.trim(),
-          }));
+      const parser = csvParse({
+        delimiter: strategy.csvOptions.separator,
+        from_line: skipLines + 1, // csv-parse is 1-based and includes header row
+        columns: (headers: string[]) => {
+          const cleanedHeaders = headers.map(h => h.trim().replace(/^["']|["']$/g, ''));
+          if (process.env.NODE_ENV !== 'production') {
+            // eslint-disable-next-line no-console
+            console.log('[ImportService] Detected CSV headers:', cleanedHeaders);
+          }
+          return cleanedHeaders;
+        },
+        skip_empty_lines: true,
+        bom: true,
+        relax_quotes: true,
+        relax_column_count: true,
+        trim: true,
+      });
 
-        stream.on('data', (row: any) => {
+      try {
+        const decodedStream = fs.createReadStream(filePath).pipe(iconv.decodeStream(encoding));
+        const stream = decodedStream.pipe(parser);
+
+        for await (const row of stream) {
+          rowCount++;
+
+          if (process.env.NODE_ENV !== 'production' && rowCount <= 3) {
+            // eslint-disable-next-line no-console
+            console.log(`[ImportService] CSV row ${rowCount} sample:`, {
+              keys: Object.keys(row),
+              sample: {
+                Buchungstag: String(row['Buchungstag'] || '').substring(0, 20),
+                'Umsatz in EUR': String(row['Umsatz in EUR'] || '').substring(0, 20),
+                'Wertstellung (Valuta)': String(row['Wertstellung (Valuta)'] || '').substring(0, 20),
+                Vorgang: String(row['Vorgang'] || '').substring(0, 30),
+                Buchungstext: String(row['Buchungstext'] || '').substring(0, 50),
+              },
+            });
+          }
+
           try {
             const normalized = strategy.mapRow(row);
             if (normalized) {
               transactions.push(normalized);
+            } else {
+              skippedCount++;
+              if (process.env.NODE_ENV !== 'production' && skippedCount <= 5) {
+                // eslint-disable-next-line no-console
+                console.warn('[ImportService] Row skipped by strategy:', {
+                  rowIndex: rowCount,
+                  allKeys: Object.keys(row),
+                  date: row['Buchungstag'] || 'NOT FOUND',
+                  amount: row['Umsatz in EUR'] || row['Betrag'] || row['Umsatz'] || 'NOT FOUND',
+                  buchungstext: String(row['Buchungstext'] || '').substring(0, 50),
+                });
+              }
             }
           } catch (err: any) {
-            errors.push(`Row parsing error: ${err.message}`);
+            errors.push(`Row ${rowCount} parsing error: ${err.message}`);
+            if (process.env.NODE_ENV !== 'production') {
+              // eslint-disable-next-line no-console
+              console.error('[ImportService] Row parsing error:', {
+                rowIndex: rowCount,
+                error: err.message,
+                stack: err.stack?.substring(0, 200),
+                rowSample: {
+                  keys: Object.keys(row),
+                  date: row['Buchungstag'],
+                  amount: row['Umsatz in EUR'],
+                },
+              });
+            }
           }
+        }
+      } catch (streamError: any) {
+        console.error('[ImportService] CSV parsing failed:', {
+          error: streamError.message,
+          stack: streamError.stack,
         });
-
-        stream.on('end', () => {
-          resolve();
-        });
-
-        stream.on('error', (err) => {
-          reject(err);
-        });
-      });
+        throw streamError;
+      } finally {
+        if (process.env.NODE_ENV !== 'production') {
+          // eslint-disable-next-line no-console
+          console.log('[ImportService] CSV parsing complete:', {
+            totalRows: rowCount,
+            validTransactions: transactions.length,
+            skipped: skippedCount,
+            errors: errors.length,
+          });
+        }
+      }
 
       if (errors.length > 0) {
         result.errors.push(...errors);
       }
 
-      // Step 4: Batch insert with deduplication
-      // Note: Using INSERT OR IGNORE with unique index on (bookingDate, valueDate, amountCents, purpose)
-      const insertStmt = db.prepare(`
-        INSERT OR IGNORE INTO transactions (
-          bookingDate,
-          valueDate,
-          amountCents,
-          currency,
-          purpose,
-          counterpartName,
-          payee,
-          memo,
-          externalId,
-          accountId,
-          createdAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `);
+      // Step 4: Convert NormalizedTransaction to CanonicalRow and insert using proper function
+      // Add dev-only logging
+      if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.log('[ImportService] parsed rows:', transactions.length);
+      }
 
-      const insertMany = db.transaction((txs: NormalizedTransaction[]) => {
-        let imported = 0;
-        let skipped = 0;
+      if (transactions.length === 0) {
+        result.success = false;
+        result.reason = 'parse_error';
+        
+        // Provide helpful error message based on what we know
+        if (rowCount === 0) {
+          result.errors.push('No data rows found in CSV file. Please check that the file contains transaction data.');
+        } else if (skippedCount === rowCount) {
+          result.errors.push(`All ${rowCount} rows were skipped. This may indicate: incorrect date/amount format, missing required columns, or all zero-amount transactions.`);
+          if (process.env.NODE_ENV !== 'production') {
+            result.errors.push(`Strategy detected: ${strategy.name}, Header row index: ${headerRowIndex}, Encoding: ${encoding}`);
+          }
+        } else {
+          result.errors.push(`No valid transactions found after parsing ${rowCount} rows. ${errors.length > 0 ? `Encountered ${errors.length} parsing errors.` : ''}`);
+        }
+        
+        if (errors.length > 0 && errors.length <= 5) {
+          result.errors.push(...errors.slice(0, 5));
+        }
+        
+        return result;
+      }
 
-        for (const tx of txs) {
-          try {
-            // Use externalId if available, otherwise generate synthetic
-            const externalId = tx.externalId || null;
+      // Map NormalizedTransaction to CanonicalRow
+      const canonicalRows: CanonicalRow[] = [];
+      const fileName = path.basename(filePath);
 
-            // Try to insert
-            // Note: valueDate defaults to bookingDate if not provided
-            const info = insertStmt.run(
-              tx.date,           // bookingDate
-              tx.date,           // valueDate (same as bookingDate for CSV imports)
-              tx.amountCents,
-              tx.currency || 'EUR',
-              tx.description || '', // purpose
-              tx.payee || '',       // counterpartName
-              tx.payee || '',       // payee
-              tx.description || '', // memo
-              externalId,
-              accountId,
-            );
+      for (const tx of transactions) {
+        try {
+          // Categorize transaction
+          const textParts = [
+            tx.description || '',
+            tx.payee || '',
+          ].filter((value): value is string => Boolean(value && value.toString().trim()));
+          
+          const categoryResult = categorize({
+            text: textParts.join(' '),
+            amount: tx.amountCents / 100,
+            amountCents: tx.amountCents,
+            iban: null,
+            counterpart: tx.payee || null,
+            memo: tx.description || '',
+            payee: tx.payee || null,
+            source: 'csv_bank',
+          });
 
-            if (info.changes > 0) {
-              imported++;
-            } else {
-              skipped++; // Duplicate (INSERT OR IGNORE)
-            }
-          } catch (err: any) {
-            errors.push(`Insert error for ${tx.payee}: ${err.message}`);
+          // Generate publicId from externalId or create hash
+          const publicId = tx.externalId || crypto
+            .createHash('sha256')
+            .update(`${tx.date}|${tx.amountCents}|${tx.description}|${tx.payee}`)
+            .digest('hex')
+            .substring(0, 16);
+
+          const canonicalRow: CanonicalRow = {
+            publicId,
+            bookingDate: tx.date,
+            valueDate: tx.date,
+            amountCents: tx.amountCents,
+            currency: tx.currency || 'EUR',
+            direction: tx.amountCents >= 0 ? 'in' : 'out',
+            purpose: tx.description || '',
+            counterpartName: tx.payee || undefined,
+            payee: tx.payee || null,
+            memo: tx.description || null,
+            externalId: tx.externalId || null,
+            accountId: accountId || undefined,
+            importFile: fileName,
+            importBatchId: null,
+            category: categoryResult.category || null,
+            categoryConfidence: categoryResult.confidence || null,
+            categorySource: categoryResult.source || null,
+            categoryExplanation: categoryResult.explanation || null,
+            categoryRuleId: categoryResult.ruleId || undefined,
+            source: 'csv_bank',
+            sourceProfile: strategy.name.toLowerCase(),
+            bankProfile: strategy.name.toLowerCase(),
+          };
+
+          canonicalRows.push(canonicalRow);
+        } catch (err: any) {
+          errors.push(`Mapping error for transaction: ${err.message}`);
+          if (process.env.NODE_ENV !== 'production') {
+            // eslint-disable-next-line no-console
+            console.warn('[ImportService] Failed to map transaction:', err);
           }
         }
+      }
 
-        return { imported, skipped };
-      });
+      if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.log('[ImportService] candidate inserts:', canonicalRows.length, 'errors:', errors.length);
+      }
 
-      const insertResult = insertMany(transactions);
-      result.imported = insertResult.imported;
-      result.skipped = insertResult.skipped;
+      // Insert using the proper insertTransactions function
+      let inserted = 0;
+      let duplicates = 0;
+      try {
+        const insertResult = insertTransactions(canonicalRows, db);
+        inserted = insertResult.inserted;
+        duplicates = insertResult.duplicates;
+        
+        if (process.env.NODE_ENV !== 'production') {
+          // eslint-disable-next-line no-console
+          console.log('[ImportService] insert result:', {
+            inserted,
+            duplicates,
+            total: canonicalRows.length,
+          });
+        }
+      } catch (dbError: any) {
+        console.error('[ImportService] Database insert failed:', {
+          error: dbError.message,
+          stack: dbError.stack,
+          transactionCount: canonicalRows.length,
+        });
+        result.errors.push(`Database error: ${dbError.message}`);
+        result.success = false;
+        result.reason = 'parse_error';
+        return result;
+      }
+
+      result.imported = inserted;
+      result.skipped = duplicates;
+      
+      // Determine reason code and success status
+      if (inserted === 0 && duplicates > 0) {
+        result.reason = 'all_duplicates';
+        result.success = true; // Parsing succeeded, just all duplicates
+      } else if (inserted === 0 && duplicates === 0 && canonicalRows.length > 0) {
+        // Parsed rows but nothing inserted - this is unusual, likely a DB issue
+        result.reason = 'parse_error';
+        result.success = false;
+        result.errors.push('Transactions were parsed but could not be inserted. This may indicate a database issue.');
+      } else if (transactions.length === 0 && errors.length > 0) {
+        result.reason = 'parse_error';
+        result.success = false;
+      } else if (!detection) {
+        result.reason = 'unsupported_format';
+        result.success = false;
+      } else {
+        result.success = true; // Successfully inserted at least one transaction
+      }
+      
+      if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.log('[ImportService] import result summary:', {
+          strategy: result.strategy,
+          parsedRows: transactions.length,
+          canonicalRows: canonicalRows.length,
+          inserted,
+          duplicates,
+          errors: errors.length,
+          reason: result.reason,
+          success: result.success,
+          firstCanonicalRow: canonicalRows.length > 0 ? {
+            bookingDate: canonicalRows[0].bookingDate,
+            amountCents: canonicalRows[0].amountCents,
+            payee: canonicalRows[0].payee?.substring(0, 30),
+          } : null,
+        });
+      }
 
       // Step 5: Optional reconciliation scan for PayPal transactions
       if (options.enableReconciliation && strategy.name === 'PayPal') {
-        result.pairedTransactions = await this.reconcilePayPalTransactions(db, accountId);
+        try {
+          result.pairedTransactions = await this.reconcilePayPalTransactions(db, accountId);
+        } catch (err) {
+          // Don't fail import if reconciliation fails
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[ImportService] Reconciliation scan failed:', err);
+          }
+        }
       }
 
       // Step 6: Detect potential internal transfers (double counts)
-      result.potentialInternalTransfers = await this.detectInternalTransfers(db, accountId);
+      try {
+        result.potentialInternalTransfers = await this.detectInternalTransfers(db, accountId);
+      } catch (err) {
+        // Don't fail import if detection fails
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[ImportService] Internal transfer detection failed:', err);
+        }
+      }
 
       result.success = true;
       return result;

@@ -3,6 +3,23 @@ import type { Goal } from '@prisma/client';
 
 export type GoalType = 'savings' | 'debt' | 'net_worth';
 
+/**
+ * Hybrid goal status interface
+ * Represents the status of a hybrid goal that may combine virtual balances
+ * (bucket allocations) with external account balances
+ */
+export interface GoalHybridStatus {
+  goalId: string;
+  mode: 'simple' | 'hybrid' | 'locked';
+  aiAssisted: boolean;
+  canToggle: boolean;
+  lastEvaluatedAt: string | null; // ISO string
+  virtualBalanceCents?: number;
+  externalBalanceCents?: number;
+  totalProgressCents?: number;
+  progressPercent?: number;
+}
+
 export interface GoalProgress {
   goal: Goal;
   currentCents: number;
@@ -161,5 +178,124 @@ export function calculateGoalProgress(
     projectedCompletionDate: projectedCompletion,
     status,
   };
+}
+
+/**
+ * Get hybrid status for a goal
+ * Tries to query the hybrid goal status view, but falls back gracefully
+ * if the view doesn't exist or the goal isn't hybrid-enabled
+ */
+export async function getHybridStatus(
+  goalId: string,
+  db: BetterSqliteDatabase,
+): Promise<GoalHybridStatus | null> {
+  try {
+    // First try to query the hybrid goal status view (if it exists)
+    try {
+      const status = db
+        .prepare(`
+          SELECT 
+            goal_id,
+            name,
+            target_amount_cents,
+            virtual_balance,
+            external_balance,
+            total_progress_cents
+          FROM view_hybrid_goal_status
+          WHERE goal_id = ?
+        `)
+        .get(goalId) as {
+          goal_id: string;
+          name: string;
+          target_amount_cents: number;
+          virtual_balance: number;
+          external_balance: number;
+          total_progress_cents: number;
+        } | undefined;
+
+      if (status) {
+        return {
+          goalId: status.goal_id,
+          mode: 'hybrid',
+          aiAssisted: false,
+          canToggle: true,
+          lastEvaluatedAt: new Date().toISOString(),
+          virtualBalanceCents: status.virtual_balance || 0,
+          externalBalanceCents: status.external_balance || 0,
+          totalProgressCents: status.total_progress_cents || 0,
+          progressPercent:
+            status.target_amount_cents > 0
+              ? Math.min(100, (status.total_progress_cents / status.target_amount_cents) * 100)
+              : 0,
+        };
+      }
+    } catch (viewError: any) {
+      // View doesn't exist or has an error - log but continue to fallback
+      // Check if it's a "no such table" or similar error
+      const errorMsg = viewError?.message || String(viewError);
+      if (process.env.NODE_ENV !== 'production' && !errorMsg.includes('no such table')) {
+        console.warn('[goalsService] view_hybrid_goal_status query failed:', errorMsg);
+      }
+    }
+
+    // Fallback: Verify goal exists and return a simple status
+    // Try to query the Goal table directly (Prisma uses "Goal" as table name)
+    try {
+      // Check multiple possible table names (Prisma vs direct SQL)
+      let goal: { id: string; targetCents: number; currentCents: number } | undefined;
+
+      // Try Prisma table name first
+      try {
+        goal = db
+          .prepare(`SELECT id, "targetCents" as targetCents, "currentCents" as currentCents FROM Goal WHERE id = ?`)
+          .get(goalId) as any;
+      } catch {
+        // Try lowercase
+        try {
+          goal = db
+            .prepare(`SELECT id, targetCents, currentCents FROM goal WHERE id = ?`)
+            .get(goalId) as any;
+        } catch {
+          // Try goals (plural)
+          goal = db
+            .prepare(`SELECT id, targetCents, currentCents FROM goals WHERE id = ?`)
+            .get(goalId) as any;
+        }
+      }
+
+      if (goal) {
+        // Return a simple status - goal exists but no hybrid features yet
+        const targetCents = goal.targetCents || 0;
+        const currentCents = goal.currentCents || 0;
+        return {
+          goalId: goal.id,
+          mode: 'simple',
+          aiAssisted: false,
+          canToggle: false,
+          lastEvaluatedAt: null,
+          virtualBalanceCents: 0,
+          externalBalanceCents: 0,
+          totalProgressCents: currentCents,
+          progressPercent: targetCents > 0 ? Math.min(100, (currentCents / targetCents) * 100) : 0,
+        };
+      }
+    } catch (dbError: any) {
+      // Table structure might be different - this is expected in some cases
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('[goalsService] Could not query goal table:', dbError?.message);
+      }
+    }
+
+    // Goal not found
+    return null;
+  } catch (err: any) {
+    // Catch any unexpected errors and log them
+    console.error('[goalsService] getHybridStatus error:', {
+      goalId,
+      error: err?.message || String(err),
+      stack: err?.stack,
+    });
+    return null;
+  }
 }
 

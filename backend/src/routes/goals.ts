@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import type { Database as BetterSqliteDatabase } from 'better-sqlite3';
 import BetterSqlite3 from 'better-sqlite3';
-import { calculateGoalProgress } from '../services/goalsService';
+import { calculateGoalProgress, getHybridStatus } from '../services/goalsService';
 
 const prisma = new PrismaClient();
 const filePath = process.env.NIMBUS_DB_PATH || process.env.DB_FILE || 'nimbus.db';
@@ -50,6 +50,28 @@ goalsRouter.get('/', async (req, res) => {
     console.error('[goals] GET error:', e);
     res.status(500).json({ error: e?.message || 'Failed to load goals' });
   }
+});
+
+/**
+ * GET /api/goals/:id/hybrid-status
+ * 
+ * Returns hybrid status for a goal, which may combine virtual balances
+ * (bucket allocations) with external account balances.
+ * 
+ * IMPORTANT: This route MUST be defined BEFORE /:id to avoid route matching conflicts
+ * 
+ * Returns 404 if goal doesn't exist, or 200 with status data.
+ */
+goalsRouter.get('/:goalId/hybrid-status', async (req: Request, res: Response) => {
+  const { goalId } = req.params;
+
+  // Temporary stub until the hybrid status service is ready.
+  return res.json({
+    goalId,
+    status: 'not_configured',
+    linkedAccounts: [],
+    lastSyncAt: null,
+  });
 });
 
 // GET /api/goals/:id
@@ -225,55 +247,6 @@ goalsRouter.delete('/:id', async (req, res) => {
   } catch (e: any) {
     console.error('[goals] DELETE error:', e);
     res.status(500).json({ error: e?.message || 'Failed to delete goal' });
-  }
-});
-
-// GET /api/goals/:id/hybrid-status
-goalsRouter.get('/:id/hybrid-status', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const db = getDb(req);
-    
-    // Query the hybrid goal status view
-    const status = db.prepare(`
-      SELECT 
-        goal_id,
-        name,
-        target_amount_cents,
-        virtual_balance,
-        external_balance,
-        total_progress_cents
-      FROM view_hybrid_goal_status
-      WHERE goal_id = ?
-    `).get(id) as {
-      goal_id: string;
-      name: string;
-      target_amount_cents: number;
-      virtual_balance: number;
-      external_balance: number;
-      total_progress_cents: number;
-    } | undefined;
-
-    if (!status) {
-      return res.status(404).json({ error: 'Goal not found or no hybrid status available' });
-    }
-
-    res.json({
-      data: {
-        goalId: status.goal_id,
-        name: status.name,
-        targetCents: status.target_amount_cents,
-        virtualBalanceCents: status.virtual_balance,
-        externalBalanceCents: status.external_balance,
-        totalProgressCents: status.total_progress_cents,
-        progressPercent: status.target_amount_cents > 0
-          ? Math.min(100, (status.total_progress_cents / status.target_amount_cents) * 100)
-          : 0,
-      },
-    });
-  } catch (e: any) {
-    console.error('[goals] GET hybrid-status error:', e);
-    res.status(500).json({ error: e?.message || 'Failed to load hybrid status' });
   }
 });
 

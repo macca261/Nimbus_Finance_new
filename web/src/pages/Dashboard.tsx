@@ -22,6 +22,7 @@ import { useGamificationData } from '../hooks/useGamificationData';
 import { GamificationHud } from '../features/gamification/components/GamificationHud';
 import { subscribeToDataMutations } from '../lib/dataEvents';
 import type { CoachStoryResponse } from '../api/coachApi';
+import { DashboardWidgetGrid } from '../features/dashboard/DashboardWidgetGrid';
 
 const SHELL_CLASS = 'mx-auto w-full max-w-[1680px] px-4 sm:px-6 lg:px-8 xl:px-10 2xl:px-12';
 
@@ -210,6 +211,8 @@ export const Dashboard: React.FC = () => {
     };
   }, []);
 
+  const [editMode, setEditMode] = useState(false);
+
   if (dashboard.uiState === 'empty') {
     return (
       <AppShell>
@@ -246,115 +249,62 @@ export const Dashboard: React.FC = () => {
     <AppShell>
       <main className="flex-1 pb-10">
         <div className={SHELL_CLASS}>
-          {/* Dashboard Grid Layout - Consistent full/half-width system for future drag-and-drop */}
+          {/* Dashboard Grid Layout - Glassmorphic widget-based system with drag & drop */}
           <div className="py-4 sm:py-5 space-y-4 sm:space-y-5">
-            {/* Gamification HUD */}
+            {/* Gamification HUD - Always at top, outside widget grid */}
             <GamificationHud
               data={gamification}
               isLoading={gamificationLoading}
               error={gamificationError}
             />
-            
-            {/* Quest Strip - Integrated, thinner cards (2 columns on desktop) */}
-            <QuestStrip
+
+            {/* Edit Mode Toggle */}
+            <div className="flex justify-end">
+              <button
+                onClick={() => setEditMode(!editMode)}
+                className={`
+                  px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                  ${editMode
+                    ? 'bg-nf-primary text-white hover:bg-nf-primary/90'
+                    : 'bg-nf-bg-card border border-nf-border-subtle text-nf-text-main hover:bg-nf-bg-card-subtle'
+                  }
+                `}
+              >
+                {editMode ? 'Fertig' : 'Layout bearbeiten'}
+              </button>
+            </div>
+
+            {/* Widget Grid - Draggable, glassmorphic cards */}
+            <DashboardWidgetGrid
+              editMode={editMode}
+              onEditModeChange={setEditMode}
+              walletFresh={walletFresh}
+              monthlyInsights={monthlyInsights}
+              balanceOverTime={summary?.balanceOverTime ?? []}
+              cashflowByMonth={summary?.cashflowByMonth ?? []}
+              categorySlices={categorySlices}
+              chartsLoading={dashboard.loading}
+              dateRangeLabel={dashboard.selectedPeriodOption.label}
+              onCategoryClick={categoryId => navigateToTransactions({ category: categoryId })}
+              monthSummary={{
+                summary: monthSummary.data?.summary || null,
+                narrative: monthSummary.data?.narrative || null,
+              }}
+              monthSummaryLoading={monthSummary.isLoading}
+              monthSummaryError={monthSummary.error}
+              monthSummaryFresh={monthSummaryFresh}
+              onMonthSummaryRefresh={monthSummary.refetch}
+              coachStory={coachStory.story}
+              coachStoryLoading={coachStory.isLoading}
+              coachStoryError={coachStory.error}
+              coachStoryFresh={coachStoryFresh}
+              onCoachStoryRefresh={coachStory.refetch}
+              achievementsFresh={false}
               quests={quests.quests}
-              isLoading={quests.isLoading}
-              error={quests.error}
-              onRefresh={quests.refetch}
+              questsLoading={quests.isLoading}
+              questsError={quests.error}
+              onQuestsRefresh={quests.refetch}
             />
-
-            {/* Row 1: Wallet Overview - Full Width */}
-            <section className="col-span-full">
-              <WalletOverview gridColumns={2} isFresh={walletFresh} />
-            </section>
-
-            {/* Row 1.5: Health Cards - Two half-width cards side by side */}
-            <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Money Health Card */}
-              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:scale-[1.01] hover:shadow-lg motion-reduce:transform-none motion-reduce:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card">
-                <div className="mb-4">
-                  <p className="text-[11px] uppercase tracking-wide text-nf-text-muted mb-1">
-                    Money Health
-                  </p>
-                  <p className="text-[10px] text-nf-text-soft">
-                    Letzte 90 Tage
-                  </p>
-                </div>
-                <div className="relative h-20 w-20 mx-auto mb-3">
-                  <svg className="absolute inset-0 -rotate-90 transform" viewBox="0 0 80 80">
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r="36"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="6"
-                      className="text-nf-border-subtle"
-                    />
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r="36"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="6"
-                      strokeDasharray={`${2 * Math.PI * 36}`}
-                      strokeDashoffset={`${2 * Math.PI * 36 * (1 - 0.82)}`}
-                      strokeLinecap="round"
-                      className="text-nf-positive transition-all duration-1000 ease-out"
-                    />
-                  </svg>
-                  <span className="absolute inset-0 flex items-center justify-center tabular-nums text-lg font-bold text-nf-positive">
-                    82%
-                  </span>
-                </div>
-                <p className="text-center text-xs text-nf-text-muted">
-                  Basierend auf deinen letzten 90 Tagen.
-                </p>
-              </div>
-              {/* Dein Monat Card */}
-              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:scale-[1.01] hover:shadow-lg motion-reduce:transform-none motion-reduce:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card">
-                <MonthlySnapshotCard insights={monthlyInsights} noCard />
-              </div>
-            </section>
-
-            {/* Row 2: Charts - Full Width */}
-            <section className="col-span-full">
-              <div className="rounded-3xl border border-nf-border-subtle bg-nf-bg-card p-5 sm:p-6 lg:p-7 shadow-elevated transition-all duration-200 ease-out hover:scale-[1.01] hover:shadow-lg motion-reduce:transform-none motion-reduce:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-nf-bg-card">
-                <DashboardChartsHub
-                  balance={summary?.balanceOverTime ?? []}
-                  cashflow={summary?.cashflowByMonth ?? []}
-                  categorySlices={categorySlices}
-                  loading={dashboard.loading}
-                  dateRangeLabel={dashboard.selectedPeriodOption.label}
-                  onCategoryClick={categoryId => navigateToTransactions({ category: categoryId })}
-                />
-              </div>
-            </section>
-
-            {/* Row 2.5: Month Glance + Coach Story Cards - Two half-width cards */}
-            <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <MonthGlanceCard
-                summary={monthSummary.data?.summary || null}
-                narrative={monthSummary.data?.narrative || null}
-                isLoading={monthSummary.isLoading}
-                error={monthSummary.error}
-                onRefresh={monthSummary.refetch}
-                isFresh={monthSummaryFresh}
-              />
-              <CoachStoryCard
-                storyResponse={coachStory.story}
-                isLoading={coachStory.isLoading}
-                error={coachStory.error}
-                onRefresh={coachStory.refetch}
-                isFresh={coachStoryFresh}
-              />
-            </section>
-
-            {/* Row 2.6: Achievements Teaser - Full Width */}
-            <section className="col-span-full">
-              <AchievementsTeaser isFresh={false} />
-            </section>
 
             {/* Error / Early state messages */}
             {dashboard.error ? (

@@ -71,9 +71,22 @@ export const SidebarSavingsGoals: React.FC<SidebarSavingsGoalsProps> = () => {
       for (const goalProgress of savingsGoals) {
         try {
           const response = await axios.get(`/api/goals/${goalProgress.goal.id}/hybrid-status`);
-          statuses[goalProgress.goal.id] = response.data.data;
-        } catch (err) {
-          // Goal might not have hybrid status yet, use defaults
+          if (response.data?.data) {
+            statuses[goalProgress.goal.id] = response.data.data;
+          } else {
+            // Invalid response format, use defaults
+            statuses[goalProgress.goal.id] = {
+              virtualBalanceCents: 0,
+              externalBalanceCents: 0,
+            };
+          }
+        } catch (err: any) {
+          // Goal might not have hybrid status yet, or endpoint returned 404/500 - use defaults
+          // Don't log errors for 404s (goal not found is expected for simple goals)
+          if (import.meta.env.DEV && err?.response?.status !== 404) {
+            // eslint-disable-next-line no-console
+            console.warn(`[SidebarSavingsGoals] hybrid-status failed for goal ${goalProgress.goal.id}:`, err?.response?.status || err?.message);
+          }
           statuses[goalProgress.goal.id] = {
             virtualBalanceCents: 0,
             externalBalanceCents: 0,
@@ -140,12 +153,18 @@ export const SidebarSavingsGoals: React.FC<SidebarSavingsGoalsProps> = () => {
             const fetchStatus = async () => {
               try {
                 const response = await axios.get(`/api/goals/${allocationDialog.goal.id}/hybrid-status`);
-                setHybridStatuses(prev => ({
-                  ...prev,
-                  [allocationDialog.goal.id]: response.data.data,
-                }));
-              } catch (err) {
-                // Ignore errors
+                if (response.data?.data) {
+                  setHybridStatuses(prev => ({
+                    ...prev,
+                    [allocationDialog.goal.id]: response.data.data,
+                  }));
+                }
+              } catch (err: any) {
+                // Ignore errors silently - hybrid status is optional
+                if (import.meta.env.DEV && err?.response?.status !== 404) {
+                  // eslint-disable-next-line no-console
+                  console.warn('[SidebarSavingsGoals] Failed to refresh hybrid status:', err?.response?.status || err?.message);
+                }
               }
             };
             fetchStatus();

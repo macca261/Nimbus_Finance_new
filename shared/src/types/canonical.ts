@@ -1,6 +1,7 @@
 export type Plan = 'free' | 'pro_lite' | 'pro_plus';
 
-export type CanonicalTransaction = {
+export interface CanonicalTransaction {
+  id: string; // new stable primary key
   bookingDate: string; // ISO date (YYYY-MM-DD)
   valueDate?: string; // ISO date (YYYY-MM-DD)
   amount: number;
@@ -11,7 +12,7 @@ export type CanonicalTransaction = {
   purpose?: string;
   txType?: string;
   rawCode?: string;
-};
+}
 
 export type ProviderNormalizedTx = {
   bookingDate: string;

@@ -9,6 +9,7 @@ import crypto from 'node:crypto'
 import type { Transaction, UserOverrideRule, Source, TransferLink, CategorizationTrace } from './types/core';
 import type { NormalizedTransaction } from './types/transactions';
 import type { CategoryId } from './types/category';
+import type { CategoryDecision, CategorySource } from '@nimbus/shared/src/categorisation';
 import { findMatchingOverride } from './overrides/userOverrides';
 import { findRefundPair, linkRefundPair } from './categorization/refundMatcher';
 import { findInternalTransferPair, applyInternalTransferFlags, classifySingleSidedSavingsTransfer, classifySingleSidedWalletTransfer } from './categorization/internalTransferMatcher';
@@ -22,6 +23,7 @@ import { categorizeTransaction } from './services/transactionCategorizationEngin
 import { autoLinkExternalSavings } from './services/externalSavingsAutoLink';
 
 export type CanonicalRow = {
+  id?: string;
   publicId?: string;
   bookingDate?: string
   valueDate?: string
@@ -37,6 +39,7 @@ export type CanonicalRow = {
   raw?: Record<string, unknown>
   importFile?: string | null
   importBatchId?: string | null
+  importId?: number | null
   category?: string
   categoryConfidence?: number
   categorySource?: string
@@ -80,20 +83,29 @@ if (!fs.existsSync(dirForDb)) fs.mkdirSync(dirForDb, { recursive: true })
 
 export type Database = BetterSqliteDatabase;
 
+function configurePragmas(database: Database) {
+  database.pragma('journal_mode = WAL');
+  database.pragma('foreign_keys = ON');
+}
+
 export function openDb(): Database {
   // Allow explicit override for tests/tools
   if (process.env.TEST_DB === '1' || process.env.NODE_ENV === 'test') {
     const mem = new BetterSqlite3(':memory:')
-    mem.pragma('journal_mode = WAL')
+    configurePragmas(mem)
     return mem
   }
-  return new BetterSqlite3(RESOLVED_PATH)
+  const fileDb = new BetterSqlite3(RESOLVED_PATH)
+  configurePragmas(fileDb)
+  return fileDb
 }
 
 export function ensureSchema(db: Database) {
+  // NOTE: 2025-11 - transactions.id now stores UUID TEXT values.
+  // Existing developer databases created before this change should be dropped/re-imported.
   db.exec(`
     CREATE TABLE IF NOT EXISTS transactions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
       bookingDate TEXT NOT NULL,
       valueDate   TEXT NOT NULL,
       amountCents INTEGER NOT NULL,
@@ -143,7 +155,7 @@ export function ensureSchema(db: Database) {
   ensureColumn('counterpartyIban', "ALTER TABLE transactions ADD COLUMN counterpartyIban TEXT");
   ensureColumn('bankProfile', "ALTER TABLE transactions ADD COLUMN bankProfile TEXT");
   ensureColumn('publicId', "ALTER TABLE transactions ADD COLUMN publicId TEXT", () => {
-    const rows = db.prepare(`SELECT id FROM transactions WHERE publicId IS NULL`).all() as { id: number }[];
+    const rows = db.prepare(`SELECT id FROM transactions WHERE publicId IS NULL`).all() as { id: string }[];
     const update = db.prepare(`UPDATE transactions SET publicId = @publicId WHERE id = @id`);
     for (const row of rows) {
       update.run({ id: row.id, publicId: crypto.randomUUID() });
@@ -180,6 +192,8 @@ export function ensureSchema(db: Database) {
   ensureColumn('isCashWithdrawal', "ALTER TABLE transactions ADD COLUMN isCashWithdrawal INTEGER DEFAULT 0", () => {
     console.log('[migrate] added column transactions.isCashWithdrawal');
   });
+  ensureColumn('importId', "ALTER TABLE transactions ADD COLUMN importId INTEGER REFERENCES imports(id) ON DELETE CASCADE");
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_transactions_importId ON transactions(importId)`);
   // Paired transaction ID for payment provider funding (architectural purity: separate from generic fromAccountId/toAccountId)
   ensureColumn('pairedTransactionId', "ALTER TABLE transactions ADD COLUMN pairedTransactionId TEXT", () => {
     console.log('[migrate] added column transactions.pairedTransactionId');
@@ -372,8 +386,12 @@ export function ensureSchema(db: Database) {
   };
 
   ensureImportColumn('batchId', "ALTER TABLE imports ADD COLUMN batchId TEXT");
+  ensureImportColumn('fileHash', "ALTER TABLE imports ADD COLUMN fileHash TEXT");
+  ensureImportColumn('status', "ALTER TABLE imports ADD COLUMN status TEXT DEFAULT 'complete'");
+  ensureImportColumn('rowCount', "ALTER TABLE imports ADD COLUMN rowCount INTEGER DEFAULT 0");
   db.exec(`CREATE INDEX IF NOT EXISTS idx_imports_createdAt ON imports(createdAt DESC);`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_imports_batchId ON imports(batchId);`);
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_imports_fileHash ON imports(fileHash) WHERE fileHash IS NOT NULL;`);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS normalization_rules (
@@ -397,7 +415,7 @@ export function ensureSchema(db: Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS tx_category_feedback (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      txId INTEGER NOT NULL,
+      txId TEXT NOT NULL,
       oldCategory TEXT,
       newCategory TEXT NOT NULL,
       createdAt TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP),
@@ -405,6 +423,20 @@ export function ensureSchema(db: Database) {
     );
   `);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_tx_feedback_txId ON tx_category_feedback(txId);`);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS transaction_categories (
+      id TEXT PRIMARY KEY,
+      transaction_id TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      source TEXT NOT NULL,
+      model_version TEXT,
+      rule_id TEXT,
+      created_at TEXT NOT NULL
+    );
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_transaction_categories_tx ON transaction_categories(transaction_id, created_at DESC);`);
 
   // Quest tables (Quest Engine v0)
   db.exec(`
@@ -497,7 +529,7 @@ export function ensureSchema(db: Database) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS transaction_splits (
       id TEXT PRIMARY KEY,
-      transaction_id INTEGER NOT NULL,
+      transaction_id TEXT NOT NULL,
       amount_cents INTEGER NOT NULL,
       category_id TEXT,
       memo TEXT,
@@ -611,6 +643,7 @@ CREATE TABLE IF NOT EXISTS user_achievements (
 
 export function prepareDb(conn: Database): void {
   conn.pragma('journal_mode = WAL');
+  conn.pragma('foreign_keys = ON');
   initDb(conn);
 }
 
@@ -670,6 +703,7 @@ export function getAllOverrideRules(conn: Database): UserOverrideRule[] {
 
 export type NormalizedCanonicalRow = {
   importBatchId?: string | null;
+  importId?: number | null;
   publicId: string;
   bookingDate: string;
   valueDate: string;
@@ -717,7 +751,7 @@ export type NormalizedCanonicalRow = {
   isCashWithdrawal?: boolean;
   createdAt: string;
   transactionPayload: Transaction;
-  id?: number; // Database ID, added when reading from DB
+  id?: string; // Database ID (UUID), populated when inserting/reading from DB
 };
 
 function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
@@ -731,6 +765,7 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
   let counterpartyIban = row.counterpartyIban ?? null;
   const accountIban = row.accountIban ?? null;
   const bankProfile = row.bankProfile ?? null;
+  const importId = row.importId ?? null;
   
   // Extract IBAN from comdirect purpose text if not already set
   // Format: "IBAN: DE32200411770270381700" or "Kto/IBAN: DE32200411770270381700"
@@ -779,6 +814,8 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
     accountIban: accountIban ?? undefined,
   } as any);
 
+  const transactionId = row.id ?? crypto.randomUUID();
+  row.id = transactionId;
   const publicId = row.publicId ?? rawCode ?? crypto.randomUUID();
 
   const transactionPayload: Transaction = {
@@ -818,6 +855,7 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
   };
 
   return {
+    id: transactionId,
     publicId,
     bookingDate,
     valueDate,
@@ -831,6 +869,7 @@ function normalizeCanonicalRow(row: CanonicalRow): NormalizedCanonicalRow {
     rawCode: rawCode ?? undefined,
     raw,
     importFile: row.importFile ?? null,
+    importId,
     category: row.category ?? null,
     categoryConfidence: row.categoryConfidence ?? null,
     categorySource: row.categorySource ?? null,
@@ -873,6 +912,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
   let inserted = 0, duplicates = 0;
   const insertStmt = conn.prepare(`
     INSERT OR IGNORE INTO transactions (
+      id,
       publicId,
       bookingDate,
       valueDate,
@@ -886,6 +926,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       raw,
       importFile,
       importBatchId,
+      importId,
       category,
       categoryConfidence,
       category_source,
@@ -923,6 +964,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       isCashWithdrawal,
       is_external_savings
     ) VALUES (
+      @id,
       @publicId,
       @bookingDate,
       @valueDate,
@@ -936,6 +978,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       @raw,
       @importFile,
       @importBatchId,
+      @importId,
       @category,
       @categoryConfidence,
       @categorySource,
@@ -1051,7 +1094,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       `).all({ accountId, cutoffDate: cutoffDateStr }) as any[];
       
       const normalizedRecent: NormalizedCanonicalRow[] = recentRows.map(row => ({
-        id: row.id,
+        id: String(row.id),
         publicId: row.publicId,
         bookingDate: row.bookingDate,
         valueDate: row.valueDate,
@@ -1213,7 +1256,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       `).all({ accountId, cutoffDate: internalTransferCutoffDateStr }) as any[];
       
       const normalizedRecent: NormalizedCanonicalRow[] = recentRows.map(row => ({
-        id: row.id,
+        id: String(row.id),
         publicId: row.publicId,
         bookingDate: row.bookingDate,
         valueDate: row.valueDate,
@@ -1462,7 +1505,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       `).all({ accountId, cutoffDate: reimbursementCutoffDateStr }) as any[];
       
       const normalizedRecent: NormalizedCanonicalRow[] = recentRows.map(row => ({
-        id: row.id,
+        id: String(row.id),
         publicId: row.publicId,
         bookingDate: row.bookingDate,
         valueDate: row.valueDate,
@@ -1660,7 +1703,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
       `).all({ accountId, cutoffDate: reimbursementCutoffDateStr }) as any[];
       
       const normalizedRecent: NormalizedCanonicalRow[] = recentRows.map(row => ({
-        id: row.id,
+        id: String(row.id),
         publicId: row.publicId,
         bookingDate: row.bookingDate,
         valueDate: row.valueDate,
@@ -1865,6 +1908,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
     // Insert all normalized rows
     for (const base of normalizedBatch) {
       const info = insertStmt.run({
+        id: base.id,
         publicId: base.publicId,
         bookingDate: base.bookingDate,
         valueDate: base.valueDate,
@@ -1878,6 +1922,7 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         raw: base.raw ? JSON.stringify(base.raw) : null,
         importFile: base.importFile,
         importBatchId: base.importBatchId ?? null,
+        importId: base.importId ?? null,
         category: base.category,
         categoryConfidence: base.categoryConfidence,
         categorySource: base.categorySource,
@@ -1916,8 +1961,20 @@ export function insertTransactions(rows: CanonicalRow[], conn: Database = db) {
         is_external_savings: (base as any).is_external_savings ? 1 : 0,
       });
 
-      if ((info as any).changes === 1) inserted++;
-      else duplicates++;
+      if ((info as any).changes === 1) {
+        inserted++;
+        if (base.id) {
+          try {
+            categorizeTransaction(base.id, conn);
+          } catch (err) {
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn('[categorizeTransaction] failed for id', base.id, (err as Error)?.message);
+            }
+          }
+        }
+      } else {
+        duplicates++;
+      }
     }
     // After batch insert, opportunistically seed accounts for any new account keys present in this batch
     try {
@@ -2071,7 +2128,7 @@ export function backfillInternalTransferCategories(conn: Database = db): number 
       AND (isRefund = 0 OR isRefund IS NULL)
       AND (isRefunded = 0 OR isRefunded IS NULL)
       AND (isReimbursement = 0 OR isReimbursement IS NULL)
-  `).all() as Array<{ id: number; internalTransferKind?: string | null }>;
+  `).all() as Array<{ id: string; internalTransferKind?: string | null }>;
   if (!rows || rows.length === 0) return 0;
   const update = conn.prepare(`UPDATE transactions SET category = ?, category_source = 'system', category_rule_id = 'internal_transfer:auto' WHERE id = ?`);
   let changes = 0;
@@ -2190,7 +2247,8 @@ export function getRecentImports(limit = 10, conn: Database = db) {
   }));
 }
 
-export function getTransactionById(id: number, conn: Database = db) {
+export function getTransactionById(id: string | number, conn: Database = db) {
+  const resolvedId = typeof id === 'string' ? id : String(id);
   return conn
     .prepare(
       `SELECT id,
@@ -2211,9 +2269,9 @@ export function getTransactionById(id: number, conn: Database = db) {
        FROM transactions
        WHERE id = ?`,
     )
-    .get(id) as
+    .get(resolvedId) as
     | {
-        id: number;
+        id: string;
         bookingDate: string;
         valueDate: string;
         amountCents: number;
@@ -2232,17 +2290,18 @@ export function getTransactionById(id: number, conn: Database = db) {
     | undefined;
 }
 
-export function applyCategoryFeedback(input: { txId: number; newCategory: string }, conn: Database = db) {
-  const existing = getTransactionById(input.txId, conn);
+export function applyCategoryFeedback(input: { txId: string | number; newCategory: string }, conn: Database = db) {
+  const txId = typeof input.txId === 'string' ? input.txId : String(input.txId);
+  const existing = getTransactionById(txId, conn);
   if (!existing) {
-    throw new Error(`Transaction ${input.txId} not found`);
+    throw new Error(`Transaction ${txId} not found`);
   }
 
   const insert = conn.prepare(`
     INSERT INTO tx_category_feedback (txId, oldCategory, newCategory)
     VALUES (?, ?, ?)
   `);
-  insert.run(input.txId, existing.category ?? null, input.newCategory);
+  insert.run(txId, existing.category ?? null, input.newCategory);
 
   conn
     .prepare(
@@ -2250,9 +2309,114 @@ export function applyCategoryFeedback(input: { txId: number; newCategory: string
        SET category = ?, category_source = 'feedback', category_confidence = 1, category_explanation = 'User override', category_rule_id = NULL
        WHERE id = ?`,
     )
-    .run(input.newCategory, input.txId);
+    .run(input.newCategory, txId);
 
-  return getTransactionById(input.txId, conn);
+  return getTransactionById(txId, conn);
+}
+
+export function insertCategoryDecision(
+  conn: Database = db,
+  input: {
+    transactionId: string;
+    categoryId: string;
+    confidence: number;
+    source: CategorySource;
+    modelVersion?: string | null;
+    ruleId?: string | null;
+  }
+): CategoryDecision {
+  const decision: CategoryDecision = {
+    id: crypto.randomUUID(),
+    transactionId: input.transactionId,
+    categoryId: input.categoryId,
+    confidence: input.confidence,
+    source: input.source,
+    modelVersion: input.modelVersion ?? null,
+    ruleId: input.ruleId ?? null,
+    createdAt: new Date().toISOString(),
+  };
+
+  conn
+    .prepare(`
+      INSERT INTO transaction_categories (
+        id,
+        transaction_id,
+        category_id,
+        confidence,
+        source,
+        model_version,
+        rule_id,
+        created_at
+      ) VALUES (
+        @id,
+        @transactionId,
+        @categoryId,
+        @confidence,
+        @source,
+        @modelVersion,
+        @ruleId,
+        @createdAt
+      )
+    `)
+    .run({
+      id: decision.id,
+      transactionId: decision.transactionId,
+      categoryId: decision.categoryId,
+      confidence: decision.confidence,
+      source: decision.source,
+      modelVersion: decision.modelVersion ?? null,
+      ruleId: decision.ruleId ?? null,
+      createdAt: decision.createdAt,
+    });
+
+  return decision;
+}
+
+export function getLatestCategoryDecision(
+  conn: Database = db,
+  transactionId: string
+): CategoryDecision | null {
+  const row = conn
+    .prepare(`
+      SELECT
+        id,
+        transaction_id as transactionId,
+        category_id as categoryId,
+        confidence,
+        source,
+        model_version as modelVersion,
+        rule_id as ruleId,
+        created_at as createdAt
+      FROM transaction_categories
+      WHERE transaction_id = @transactionId
+      ORDER BY datetime(created_at) DESC
+      LIMIT 1
+    `)
+    .get({ transactionId }) as
+    | {
+        id: string;
+        transactionId: string;
+        categoryId: string;
+        confidence: number;
+        source: CategorySource;
+        modelVersion: string | null;
+        ruleId: string | null;
+        createdAt: string;
+      }
+    | undefined;
+
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    transactionId: row.transactionId,
+    categoryId: row.categoryId,
+    confidence: row.confidence,
+    source: row.source,
+    modelVersion: row.modelVersion ?? null,
+    ruleId: row.ruleId ?? null,
+    createdAt: row.createdAt,
+  };
 }
 
 export function fetchTransactionsForMatching(conn: Database = db): { paypal: NormalizedTransaction[]; bank: NormalizedTransaction[] } {

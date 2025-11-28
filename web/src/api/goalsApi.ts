@@ -61,3 +61,47 @@ export async function deleteGoal(id: string): Promise<void> {
   }
 }
 
+export interface GoalHybridStatus {
+  goalId: string;
+  mode: 'simple' | 'hybrid' | 'locked';
+  aiAssisted: boolean;
+  canToggle: boolean;
+  lastEvaluatedAt: string | null;
+  virtualBalanceCents?: number;
+  externalBalanceCents?: number;
+  totalProgressCents?: number;
+  progressPercent?: number;
+}
+
+/**
+ * Fetch hybrid status for a goal
+ * Returns null if goal doesn't exist or hybrid status is unavailable
+ */
+export async function fetchGoalHybridStatus(goalId: string): Promise<GoalHybridStatus | null> {
+  try {
+    const res = await fetch(`/api/goals/${encodeURIComponent(goalId)}/hybrid-status`);
+    if (res.status === 404) {
+      return null; // Goal not found or no hybrid status
+    }
+    if (!res.ok) {
+      if (import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.error('[goalsApi] hybrid-status failed', {
+          goalId,
+          status: res.status,
+          statusText: res.statusText,
+        });
+      }
+      return null;
+    }
+    const json = await res.json();
+    return json.data || null;
+  } catch (err: any) {
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.error('[goalsApi] hybrid-status error', err);
+    }
+    return null; // Return null on network errors too
+  }
+}
+

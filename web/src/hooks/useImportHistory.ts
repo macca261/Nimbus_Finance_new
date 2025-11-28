@@ -34,7 +34,8 @@ export function useImportHistory(): ImportHistoryState {
         return;
       }
       const json = await res.json();
-      const list = Array.isArray(json?.history) ? json.history : json;
+      // Handle both { items: [...] } and { history: [...] } formats, plus direct array
+      const list = json?.items || json?.history || (Array.isArray(json) ? json : []);
       if (Array.isArray(list)) {
         setEntries(
           list.map(item => ({
